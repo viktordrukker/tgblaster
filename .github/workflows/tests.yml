@@ -1,0 +1,73 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    name: pytest (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest tests/ -x --tb=short
+
+  docker-build:
+    name: docker build smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build app image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: false
+          tags: tgblaster:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  secret-scan:
+    name: check for leaked secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for API hash / session leaks
+        run: |
+          # Fail if any file outside docs/ or .env.example contains a
+          # hex32 that looks like a Telegram api_hash. Simple heuristic
+          # that catches the common mistake of pasting into README.
+          ! grep -rEn '[a-f0-9]{32}' \
+              --exclude-dir=.git \
+              --exclude-dir=docs \
+              --exclude='.env.example' \
+              --exclude='*.lock' \
+              --exclude='requirements.txt' \
+              . \
+              | grep -vE '^\./(CHANGELOG|LICENSE|SECURITY)\.md' \
+              || (echo '::error::Possible api_hash leak above.' && exit 1)

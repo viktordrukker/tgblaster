@@ -1,0 +1,74 @@
+# Three-service stack: Streamlit UI + arq worker + Redis.
+#
+#   docker compose up           — start everything in the foreground
+#   docker compose up -d        — start detached
+#   docker compose down         — stop & remove containers
+#   docker compose logs -f app  — tail a service's logs
+#
+# State lives on named volumes so tearing containers down doesn't wipe
+# your Telethon session or the SQLite DB.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: blaster-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: blaster-app
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      IN_DOCKER: "1"
+    volumes:
+      - ./sessions:/app/sessions
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      # Bind-mount .env so "Save credentials" in the UI persists to the
+      # host file. compose also reads this same file via env_file above.
+      - ./.env:/app/.env
+    # Default CMD from Dockerfile starts Streamlit.
+
+  worker:
+    build: .
+    container_name: blaster-worker
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      IN_DOCKER: "1"
+    volumes:
+      - ./sessions:/app/sessions
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./.env:/app/.env
+    command: ["python", "-m", "arq", "core.jobs.WorkerSettings"]
+    # The image-level HEALTHCHECK targets Streamlit on :8501; the worker
+    # doesn't serve HTTP, so disable it here to avoid a false "unhealthy".
+    healthcheck:
+      disable: true
+    # Phase H0 — let in-flight sends finish cleanly on `docker compose
+    # down` / `restart`. arq gets ~30 s to flush the current contact,
+    # land the `confirm_send`, and exit before SIGKILL.
+    stop_grace_period: 30s
+
+volumes:
+  redis-data:

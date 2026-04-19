@@ -1,0 +1,119 @@
+# Production / VPS variant of docker-compose.yml.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Differences from the dev file:
+#   * Redis is NOT exposed to host network — only on the internal
+#     docker network.
+#   * App listens on 127.0.0.1:8501 only — never 0.0.0.0. Expose to
+#     the internet via the `caddy` service (HTTPS + basic-auth).
+#   * Named volumes instead of bind-mounts — portable across hosts.
+#   * Memory limits per service — prevent one runaway process OOMing
+#     the box.
+#   * Log rotation — JSON files capped at 10 MB × 3 rotations.
+#   * `.env` is NOT bind-mounted back into the host (dev file does this
+#     so the UI's "Save credentials" button persists to disk — in prod
+#     you should edit .env directly and restart).
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: blaster-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  app:
+    build: .
+    container_name: blaster-app
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_healthy}
+    ports:
+      # Loopback only. Public traffic must go through Caddy.
+      - "127.0.0.1:8501:8501"
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      IN_DOCKER: "1"
+    volumes:
+      - tgblaster-sessions:/app/sessions
+      - tgblaster-data:/app/data
+      - tgblaster-uploads:/app/uploads
+    deploy:
+      resources:
+        limits: {memory: 768M}
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  worker:
+    build: .
+    container_name: blaster-worker
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_healthy}
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      IN_DOCKER: "1"
+    volumes:
+      - tgblaster-sessions:/app/sessions
+      - tgblaster-data:/app/data
+      - tgblaster-uploads:/app/uploads
+    command: ["python", "-m", "arq", "core.jobs.WorkerSettings"]
+    healthcheck:
+      disable: true
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: {memory: 768M}
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: blaster-caddy
+    restart: unless-stopped
+    depends_on:
+      app: {condition: service_started}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docs/examples/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      # Override these in your .env before starting:
+      #   TGBLASTER_DOMAIN=tgblaster.yourdomain.com
+      #   TGBLASTER_BASIC_AUTH_USER=admin
+      #   TGBLASTER_BASIC_AUTH_HASH=<bcrypt hash; see DEPLOYMENT.md>
+      TGBLASTER_DOMAIN: ${TGBLASTER_DOMAIN:-localhost}
+      TGBLASTER_BASIC_AUTH_USER: ${TGBLASTER_BASIC_AUTH_USER:-admin}
+      TGBLASTER_BASIC_AUTH_HASH: ${TGBLASTER_BASIC_AUTH_HASH:-}
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  redis-data:
+  tgblaster-sessions:
+  tgblaster-data:
+  tgblaster-uploads:
+  caddy-data:
+  caddy-config:

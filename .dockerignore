@@ -1,0 +1,29 @@
+# Build context hygiene — don't bake local state or dev artifacts into the image.
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+pytest-cache-files-*
+.mypy_cache
+.ruff_cache
+.vscode
+.idea
+.DS_Store
+node_modules
+
+# State/secrets
+sessions/*
+!sessions/.gitkeep
+data/*.db
+data/*.db-journal
+uploads/*
+!uploads/.gitkeep
+.env
+*.session
+*.session-journal
+
+# Docs/build outputs we don't need in the image
+*.log

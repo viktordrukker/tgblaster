@@ -1,0 +1,47 @@
+{
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "ruff.lint.args": ["--line-length=100"],
+  "editor.rulers": [100],
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.eol": "\n",
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/*.egg-info": true,
+    ".venv": true,
+    "sessions": true,
+    "data/*.db": true,
+    "data/*.db-journal": true
+  },
+  "search.exclude": {
+    "sessions": true,
+    "data/*.db": true,
+    "uploads": true
+  },
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "cSpell.words": [
+    "arq",
+    "asdict",
+    "dataframe",
+    "dotenv",
+    "floodwait",
+    "fullname",
+    "meetup",
+    "phonenumbers",
+    "streamlit",
+    "telethon",
+    "TGBlaster"
+  ]
+}

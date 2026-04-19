@@ -1,0 +1,24 @@
+# Dev override: bind-mount the source into the container so that edits in
+# VSCode are reflected immediately without rebuilding.  Streamlit is started
+# in dev mode (file watcher on) and the container keeps running if the
+# server crashes so you can fix and restart.
+services:
+  app:
+    command: >-
+      streamlit run app.py
+      --server.runOnSave=true
+      --server.headless=true
+      --server.port=8501
+      --server.address=0.0.0.0
+    volumes:
+      - ..:/app:cached
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_RUNONSAVE=true
+  worker:
+    volumes:
+      - ..:/app:cached
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1

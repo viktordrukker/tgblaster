@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Up (docker compose)",
+      "type": "shell",
+      "command": "docker compose up -d --build",
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Down",
+      "type": "shell",
+      "command": "docker compose down",
+      "problemMatcher": []
+    },
+    {
+      "label": "Logs (tail)",
+      "type": "shell",
+      "command": "docker compose logs -f --tail=100",
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests",
+      "type": "shell",
+      "command": "python -m pytest -vv tests",
+      "problemMatcher": [],
+      "group": {"kind": "test", "isDefault": true}
+    },
+    {
+      "label": "Streamlit (local)",
+      "type": "shell",
+      "command": "streamlit run app.py",
+      "problemMatcher": []
+    }
+  ]
+}

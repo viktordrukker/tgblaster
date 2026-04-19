@@ -1,0 +1,56 @@
+name: ✨ Feature request
+description: Suggest a new feature or improvement
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Features that help consent-based flows (read-receipts, dedup,
+        analytics, deployment UX) are welcome. Features that help with
+        cold outreach, scraping, or opt-out evasion will be closed.
+        See [CONTRIBUTING.md#whats-in-scope](../blob/main/CONTRIBUTING.md#whats-in-scope).
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This feature is for consent-based / opt-in messaging, not cold outreach.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you solving?
+      description: Describe the pain, not the solution. Who hurts today and how often?
+      placeholder: |
+        When I send a campaign to 200 contacts, I can't tell which ones actually
+        opened the message. I'd like to see read-status so I can follow up with the
+        ones who didn't, without re-pinging those who did.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: One paragraph on HOW you'd solve it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you think about and why didn't it work?
+    validations:
+      required: false
+
+  - type: textarea
+    id: audience
+    attributes:
+      label: Who else benefits?
+      description: Is this a you-only thing or does it help a broader audience?
+    validations:
+      required: false

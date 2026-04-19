@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions / usage help
+    url: https://github.com/viktordrukker/tgblaster/discussions
+    about: |
+      For "how do I...?" and "is X possible?" use Discussions —
+      keeps the issue tracker focused on actionable work.
+
+  - name: 🔐 Security vulnerability
+    url: https://github.com/viktordrukker/tgblaster/security/advisories/new
+    about: |
+      Report privately via GitHub security advisories. Please don't
+      file security bugs as public issues.
+
+  - name: 📖 Docs
+    url: https://github.com/viktordrukker/tgblaster/tree/main/docs
+    about: |
+      Configuration, deployment, architecture, troubleshooting.

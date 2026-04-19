@@ -1,0 +1,46 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Streamlit: app.py",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": [
+        "run",
+        "app.py",
+        "--server.headless=true",
+        "--server.port=8501"
+      ],
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "arq worker",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "arq",
+      "args": ["core.jobs.WorkerSettings"],
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "pytest: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-vv", "${file}"],
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "pytest: all",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-vv", "tests"],
+      "justMyCode": false,
+      "console": "integratedTerminal"
+    }
+  ]
+}

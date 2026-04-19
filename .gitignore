@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Telegram sessions & local state (WAL mode creates -shm / -wal siblings)
+sessions/*.session
+sessions/*.session-journal
+sessions/*.session-shm
+sessions/*.session-wal
+sessions/.session_cache
+!sessions/.gitkeep
+
+# App data
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+!data/.gitkeep
+!data/example_contacts.csv
+
+# Uploads (user media)
+uploads/*
+!uploads/.gitkeep
+
+# Test & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/*.log
+.vscode/.ropeproject
+
+# Build noise & sandbox artifacts
+.git.attempt2/
+.git.broken/
+.git.broken-*/
+pytest-cache-files-*/
+.git.session.bak

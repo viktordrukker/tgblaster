@@ -1,0 +1,92 @@
+name: 🐛 Bug report
+description: Something broken in TGBlaster
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report!
+
+        **Security bug?** Please don't file it here — use
+        [private advisories](https://github.com/viktordrukker/tgblaster/security/advisories/new)
+        instead.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Before filing
+      options:
+        - label: I've searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I've read [DISCLAIMER.md](../blob/main/DISCLAIMER.md) and my use case is consent-based.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: TGBlaster version
+      description: Release tag (e.g. `v0.1.0`) or commit hash. Find it with `git describe --always`.
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment mode
+      options:
+        - Docker Compose (local)
+        - Docker Compose (VPS)
+        - Standalone (no Docker)
+        - Cloud PaaS (Fly.io / Railway / other)
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python, Docker versions
+      placeholder: Ubuntu 22.04, Python 3.11.6, Docker 24.0.7
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Shortest path from a fresh install to the bug.
+      placeholder: |
+        1. `docker compose up -d --build`
+        2. Log in with ...
+        3. Import CSV with 5 contacts
+        4. Click "Подготовить к кампании"
+        5. Observe: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Output of `docker compose logs app worker --tail 100` (or equivalent),
+        with any API hashes / phone numbers / real names redacted.
+      render: text
+    validations:
+      required: false

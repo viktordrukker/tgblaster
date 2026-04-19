@@ -1,0 +1,50 @@
+# Caddyfile for TGBlaster production deployment.
+#
+#   - TLS: Let's Encrypt auto-cert on first request. Zero config.
+#   - Auth: HTTP basic-auth on every path. Brute-force protection
+#     relies on Caddy's built-in rate limit + bcrypt hashing.
+#   - Single upstream: the `app` service on port 8501.
+#
+# Environment variables populated from .env:
+#   TGBLASTER_DOMAIN           — DNS name that resolves to this box.
+#   TGBLASTER_BASIC_AUTH_USER  — username
+#   TGBLASTER_BASIC_AUTH_HASH  — bcrypt hash of the password.
+#                                Generate with:  caddy hash-password
+#
+# Websockets are required by Streamlit — Caddy's reverse_proxy handles
+# them transparently; no extra config needed.
+
+{$TGBLASTER_DOMAIN} {
+    encode gzip
+
+    basicauth {
+        {$TGBLASTER_BASIC_AUTH_USER} {$TGBLASTER_BASIC_AUTH_HASH}
+    }
+
+    reverse_proxy app:8501 {
+        # Streamlit uses websockets on /_stcore/stream. Default
+        # reverse_proxy is fine, but make the read timeout generous
+        # so long-running campaign pages don't drop the connection.
+        transport http {
+            read_timeout  30m
+            write_timeout 30m
+        }
+    }
+
+    # Basic security headers. Streamlit plays fine with these defaults.
+    header {
+        # HSTS: 1 year, include subdomains. Uncomment once you're sure
+        # the domain will stay on TGBlaster — HSTS is hard to revert.
+        # Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options        "SAMEORIGIN"
+        Referrer-Policy        "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+        level  INFO
+    }
+}
