@@ -37,6 +37,10 @@ data/*.db-shm
 uploads/*
 !uploads/.gitkeep
 
+# Top-level screenshots landing folder (raw drops before renaming into
+# docs/screenshots/). Keeps timestamp-named originals out of git.
+screenshots/
+
 # Test & coverage
 .pytest_cache/
 .coverage

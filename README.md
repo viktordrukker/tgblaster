@@ -26,9 +26,9 @@ what this software can protect you from.
 
 | | |
 |---|---|
-| ![Login](./docs/screenshots/01-login.png) | ![Contacts](./docs/screenshots/02-contacts.png) |
-| ![Compose](./docs/screenshots/03-compose.png) | ![Campaign](./docs/screenshots/04-campaign.png) |
-| ![Log + read receipts](./docs/screenshots/05-log.png) | ![Jobs](./docs/screenshots/06-jobs.png) |
+| ![Login](./docs/screenshots/01-login.jpg) | ![Contacts](./docs/screenshots/02-contacts.jpg) |
+| ![Dry-run](./docs/screenshots/03-dryrun.jpg) | ![Campaign](./docs/screenshots/04-campaign.jpg) |
+| ![Log + read receipts](./docs/screenshots/05-log.jpg) | ![Jobs](./docs/screenshots/06-jobs.jpg) |
 
 ---
 

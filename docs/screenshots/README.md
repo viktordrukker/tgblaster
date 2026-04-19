@@ -1,17 +1,15 @@
 # Screenshots
 
-The main README references six screenshots by these exact filenames.
-After the first commit, drop the PNGs into this directory with the
-following names:
+The main README references six screenshots by these exact filenames:
 
 | Filename | What it shows |
 |---|---|
-| `01-login.png` | Step 1 · Accounts page — logged-in state ("TG-аккаунт подключён"), default account row visible, `api_id` masked. |
-| `02-contacts.png` | Contacts page — "В базе сейчас" metrics (Всего / С Telegram / Без Telegram / Ждут resolve) + the "🚀 Подготовить к кампании" button. |
-| `03-compose.png` | Compose Message — editor toolbar, text area, 5-device preview tabs with image in bubble. |
-| `04-campaign.png` | Campaign page — running state with KPI tiles (Осталось / Отправлено / Ошибок / Пропущено), state badge, Pause/Stop buttons. |
-| `05-log.png` | Log page — Read-check + 5-column KPI row including "Прочитано", send-log table with `read_at` populated. |
-| `06-jobs.png` | Jobs page — job table with payload and progress JSON expanded. |
+| `01-login.jpg` | Step 1 · Accounts page — logged-in state ("TG-аккаунт подключён"), default account row visible, `api_id` masked. |
+| `02-contacts.jpg` | Contacts page — "В базе сейчас" metrics (Всего / С Telegram / Без Telegram / Ждут resolve) + the "🚀 Подготовить к кампании" button. |
+| `03-dryrun.jpg` | Dry-run page — send a test to your own Saved Messages before firing a real campaign. |
+| `04-campaign.jpg` | Campaign page — state badge (`done` in the screenshot), KPI tiles (Осталось / Отправлено / Ошибок / Пропущено), Pause / Stop / Reset buttons. |
+| `05-log.jpg` | Log page — "Проверить прочтения" button + 5-column KPI row including "Прочитано", send-log table with `read_at` populated. |
+| `06-jobs.jpg` | Jobs page — job table with payload and progress JSON visible, covering resolve / validate / run_campaign / check_read_receipts. |
 
 ## Taking new screenshots
 
