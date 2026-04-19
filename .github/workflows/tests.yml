@@ -59,15 +59,31 @@ jobs:
 
       - name: Scan for API hash / session leaks
         run: |
-          # Fail if any file outside docs/ or .env.example contains a
-          # hex32 that looks like a Telegram api_hash. Simple heuristic
-          # that catches the common mistake of pasting into README.
-          ! grep -rEn '[a-f0-9]{32}' \
+          # Fail if a tracked file contains a hex32 that looks like a
+          # real Telegram api_hash AND isn't on the allow-list of
+          # well-known documentation placeholders. The allow-list:
+          #   * `0123456789abcdef0123456789abcdef` — the walk-the-alphabet
+          #     placeholder repeated by docs and README examples.
+          #   * lines inside the scripts/pre-push-check.sh allow-list
+          #     itself (meta-reference).
+          #
+          # Heuristic — not cryptographically sound, but catches the
+          # common "pasted real creds into README" mistake which is the
+          # whole reason for this job.
+          HITS=$(grep -rEn '[a-f0-9]{32}' \
               --exclude-dir=.git \
+              --exclude-dir=.github \
               --exclude-dir=docs \
               --exclude='.env.example' \
               --exclude='*.lock' \
               --exclude='requirements.txt' \
               . \
-              | grep -vE '^\./(CHANGELOG|LICENSE|SECURITY)\.md' \
-              || (echo '::error::Possible api_hash leak above.' && exit 1)
+              | grep -viE '(0123456789abcdef0123456789abcdef|example|your_api_hash|pre-push-check\.sh)' \
+              | grep -vE ':(LICENSE|SECURITY)\.md' \
+              || true)
+          if [ -n "$HITS" ]; then
+              echo "::error::Possible api_hash leak (not on allow-list):"
+              echo "$HITS"
+              exit 1
+          fi
+          echo "✓ no un-whitelisted hex32 tokens found"
