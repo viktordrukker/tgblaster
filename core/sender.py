@@ -208,9 +208,24 @@ async def run_campaign(
             }
             await _maybe_await(on_progress(payload))
 
+    def _maybe_safe_confirm(contact_id: int, status: str, detail: str) -> None:
+        """_safe_confirm that no-ops in dry-run (Saved Messages) so we
+        don't taint the real contact's send_log row."""
+        if dry_run_to_self:
+            return
+        _safe_confirm(db, campaign_id, contact_id, status, detail)
+
+    # Phase F1 — PeerFloodError is per-peer, not account-level. A single
+    # flagged peer used to kill the whole campaign; now we skip the peer
+    # and only stop after N distinct peers raise PeerFlood on the same
+    # run — the actual "Telegram thinks you're spamming" signal.
+    peer_flood_seen: set[int] = set()
+    PEER_FLOOD_STOP_THRESHOLD = 3
+
     await _emit(status="starting")
 
-    db.update_campaign_status(campaign_id, "running")
+    if not dry_run_to_self:
+        db.update_campaign_status(campaign_id, "running")
 
     try:
         for contact in contacts:
@@ -244,15 +259,25 @@ async def run_campaign(
             # Phase H2 — reserve before send. The reserve row prevents
             # duplicate delivery if we crash between send() and confirm().
             # If the contact was already sent (resume race), skip cleanly.
-            rid, state = db.reserve_send(
-                campaign_id, contact["id"], _fresh_random_id(),
-            )
-            if state == "sent":
-                outcome.skipped += 1
-                await _emit(status="skipped",
-                            current=contact["name"],
-                            detail="already-sent (race)")
-                continue
+            #
+            # Dry-run intentionally skips reserve/confirm: the message
+            # goes to Saved Messages, so recording it against a real
+            # contact would both mislead the UI ("sent to X" when it
+            # went to self) AND cause `already_sent_ids` to filter that
+            # contact out of the real campaign run — a silent delivery
+            # drop. See test_dry_run_does_not_touch_send_log.
+            if dry_run_to_self:
+                rid = _fresh_random_id()
+            else:
+                rid, state = db.reserve_send(
+                    campaign_id, contact["id"], _fresh_random_id(),
+                )
+                if state == "sent":
+                    outcome.skipped += 1
+                    await _emit(status="skipped",
+                                current=contact["name"],
+                                detail="already-sent (race)")
+                    continue
 
             # Second stop-check right before the RPC. The waiting loop
             # at the end of the previous iteration already broke on
@@ -325,34 +350,45 @@ async def run_campaign(
                         )
                         send_landed = True
                     else:
-                        _safe_confirm(
-                            db, campaign_id, contact["id"], "error",
-                            f"post-flood: {e2}",
-                        )
+                        _maybe_safe_confirm(contact["id"], "error",
+                                            f"post-flood: {e2}")
                         outcome.errors += 1
                         await _emit(status="error", current=contact["name"], error=str(e2))
                 except Exception as e2:  # noqa: BLE001
-                    _safe_confirm(
-                        db, campaign_id, contact["id"], "error",
-                        f"post-flood: {e2}",
-                    )
+                    _maybe_safe_confirm(contact["id"], "error",
+                                        f"post-flood: {e2}")
                     outcome.errors += 1
                     await _emit(status="error", current=contact["name"], error=str(e2))
 
             except PeerFloodError:
-                # Telegram has flagged us for spamming — stop NOW.
-                log.error("PeerFloodError — stopping campaign to protect the account")
-                _safe_confirm(db, campaign_id, contact["id"], "error",
-                              "PeerFloodError")
-                outcome.errors += 1
-                outcome.stopped_reason = "peer_flood"
-                await _emit(status="peer_flood", current=contact["name"])
-                break
+                # PeerFloodError is per-peer — one flagged contact doesn't
+                # mean the account is banned (confirmed via @SpamBot). We
+                # skip this peer and continue; only if PEER_FLOOD_STOP_
+                # THRESHOLD distinct peers raise it in one run do we treat
+                # the account as at risk and bail.
+                peer_flood_seen.add(int(contact["id"]))
+                _maybe_safe_confirm(contact["id"], "skipped",
+                                    "PeerFloodError (per-peer)")
+                outcome.skipped += 1
+                if len(peer_flood_seen) >= PEER_FLOOD_STOP_THRESHOLD:
+                    log.error(
+                        "PeerFloodError on %d distinct peers — "
+                        "stopping to protect the account",
+                        len(peer_flood_seen),
+                    )
+                    outcome.stopped_reason = "peer_flood"
+                    await _emit(status="peer_flood",
+                                current=contact["name"],
+                                detail=f"{len(peer_flood_seen)} peers flagged")
+                    break
+                await _emit(status="skipped",
+                            current=contact["name"],
+                            detail="PeerFloodError (per-peer)")
 
             except (UserPrivacyRestrictedError, UserIsBlockedError,
                     ChatWriteForbiddenError, InputUserDeactivatedError) as e:
-                _safe_confirm(db, campaign_id, contact["id"], "skipped",
-                              type(e).__name__)
+                _maybe_safe_confirm(contact["id"], "skipped",
+                                    type(e).__name__)
                 outcome.skipped += 1
                 await _emit(status="skipped", current=contact["name"],
                             detail=type(e).__name__)
@@ -377,7 +413,7 @@ async def run_campaign(
                     send_landed = True
                 else:
                     log.exception("Send failed (sqlite)")
-                    _safe_confirm(db, campaign_id, contact["id"], "error", str(e))
+                    _maybe_safe_confirm(contact["id"], "error", str(e))
                     outcome.errors += 1
                     await _emit(status="error", current=contact["name"], error=str(e))
 
@@ -386,7 +422,7 @@ async def run_campaign(
                 # mark error; the rid hasn't reached Telegram in a
                 # delivered state.
                 log.exception("Send failed")
-                _safe_confirm(db, campaign_id, contact["id"], "error", str(e))
+                _maybe_safe_confirm(contact["id"], "error", str(e))
                 outcome.errors += 1
                 await _emit(status="error", current=contact["name"], error=str(e))
 
@@ -399,17 +435,20 @@ async def run_campaign(
                 # Phase R1 — store Telegram's message.id when we have one
                 # (post-session-lock branch leaves it None and the later
                 # read-check falls back to the coarse path).
-                try:
-                    db.confirm_send(
-                        campaign_id, contact["id"], "sent", "",
-                        message_id=sent_message_id,
-                    )
-                except Exception as confirm_err:  # noqa: BLE001
-                    log.warning(
-                        "confirm_send failed after successful send — "
-                        "row stays 'pending' (rid=%s) for idempotent retry: %s",
-                        rid, confirm_err,
-                    )
+                # Dry-run: the message went to Saved Messages, not to
+                # this contact — don't write send_log (see F2).
+                if not dry_run_to_self:
+                    try:
+                        db.confirm_send(
+                            campaign_id, contact["id"], "sent", "",
+                            message_id=sent_message_id,
+                        )
+                    except Exception as confirm_err:  # noqa: BLE001
+                        log.warning(
+                            "confirm_send failed after successful send — "
+                            "row stays 'pending' (rid=%s) for idempotent retry: %s",
+                            rid, confirm_err,
+                        )
                 outcome.sent += 1
                 await _emit(status="sent", current=contact["name"])
 
@@ -427,13 +466,15 @@ async def run_campaign(
                 await asyncio.sleep(min(1, delay - slept))
                 slept += 1
 
-        db.update_campaign_status(
-            campaign_id,
-            "done" if not outcome.stopped_reason else "paused",
-        )
+        if not dry_run_to_self:
+            db.update_campaign_status(
+                campaign_id,
+                "done" if not outcome.stopped_reason else "paused",
+            )
         await _emit(status="finished", stopped_reason=outcome.stopped_reason)
     except Exception:
-        db.update_campaign_status(campaign_id, "paused")
+        if not dry_run_to_self:
+            db.update_campaign_status(campaign_id, "paused")
         raise
 
     return outcome

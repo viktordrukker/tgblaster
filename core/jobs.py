@@ -378,7 +378,11 @@ async def run_campaign_job(ctx: dict, payload: dict) -> dict:
             watcher.cancel()
 
         # Phase H6 — translate sender outcome into campaign state.
-        if outcome.stopped_reason == "user_paused":
+        # Skip entirely for dry-run: it went to Saved Messages, not to
+        # real contacts, so it must not flip the campaign lifecycle.
+        if dry_run:
+            pass
+        elif outcome.stopped_reason == "user_paused":
             db.transition_campaign_state(campaign_id, "paused")
         elif outcome.stopped_reason == "user_stopped":
             db.transition_campaign_state(campaign_id, "stopped")

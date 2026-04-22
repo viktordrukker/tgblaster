@@ -120,24 +120,51 @@ async def test_privacy_error_marks_skipped(tmp_db: Database):
 
 
 @pytest.mark.asyncio
-async def test_peer_flood_stops_campaign(tmp_db: Database):
+async def test_peer_flood_single_peer_is_skipped_not_stopped(tmp_db: Database):
+    """PeerFloodError is per-peer (Telegram flags the recipient, not the
+    account). One occurrence skips the contact and keeps going; the
+    campaign only stops on the account-level threshold."""
     from telethon.errors import PeerFloodError
 
     _seed(tmp_db, 5)
     cid = tmp_db.create_campaign("t", "Hi", None, None)
     contacts = tmp_db.resolved_contacts()
-    first_tg_id = contacts[0]["tg_user_id"]
 
     def raise_peer_flood():
         raise PeerFloodError(None)
 
-    client = FakeClient({first_tg_id: raise_peer_flood})
+    client = FakeClient({contacts[0]["tg_user_id"]: raise_peer_flood})
+    pacing = PacingConfig(min_delay_sec=0, max_delay_sec=0, long_pause_every=100,
+                          long_pause_min_sec=0, long_pause_max_sec=0, daily_cap=999)
+    outcome = await run_campaign(client, tmp_db, cid, pacing)
+    assert outcome.stopped_reason == ""          # kept going
+    assert outcome.skipped == 1                  # the flagged peer
+    assert outcome.sent == 4                     # the rest went through
+
+
+@pytest.mark.asyncio
+async def test_peer_flood_threshold_stops_campaign(tmp_db: Database):
+    """Three distinct PeerFlood events in one run = real account-level
+    signal. Stop to protect the account."""
+    from telethon.errors import PeerFloodError
+
+    _seed(tmp_db, 5)
+    cid = tmp_db.create_campaign("t", "Hi", None, None)
+    contacts = tmp_db.resolved_contacts()
+
+    def raise_peer_flood():
+        raise PeerFloodError(None)
+
+    client = FakeClient({
+        contacts[0]["tg_user_id"]: raise_peer_flood,
+        contacts[1]["tg_user_id"]: raise_peer_flood,
+        contacts[2]["tg_user_id"]: raise_peer_flood,
+    })
     pacing = PacingConfig(min_delay_sec=0, max_delay_sec=0, long_pause_every=100,
                           long_pause_min_sec=0, long_pause_max_sec=0, daily_cap=999)
     outcome = await run_campaign(client, tmp_db, cid, pacing)
     assert outcome.stopped_reason == "peer_flood"
-    assert outcome.errors == 1
-    # Should NOT have sent to anyone else after peer-flood
+    assert outcome.skipped == 3
     assert outcome.sent == 0
 
 
@@ -211,3 +238,53 @@ async def test_dry_run_hits_self_only(tmp_db: Database):
     assert outcome.sent == 1
     # Recipient should be the fake "me" id, not any contact
     assert client.sent[0][0] == 999_000
+
+
+@pytest.mark.asyncio
+async def test_dry_run_does_not_touch_send_log(tmp_db: Database):
+    """Regression: dry-run sent to Saved Messages but used to write a
+    send_log row against the first real contact, (a) misleading the UI
+    queue ("sent to X") and (b) causing the real campaign run to silently
+    skip X via already_sent_ids. Dry-run must leave send_log untouched."""
+    _seed(tmp_db, 3)
+    cid = tmp_db.create_campaign("t", "Hi", None, None)
+    client = FakeClient()
+    pacing = PacingConfig(min_delay_sec=0, max_delay_sec=0, long_pause_every=100,
+                          long_pause_min_sec=0, long_pause_max_sec=0, daily_cap=999)
+
+    await run_campaign(client, tmp_db, cid, pacing, dry_run_to_self=True)
+
+    # send_log stays empty after a dry-run — no real contact was touched.
+    assert tmp_db.already_sent_ids(cid) == set()
+    assert tmp_db.send_log_df(cid).empty
+
+    # A real run afterwards must deliver to all 3 contacts.
+    real_client = FakeClient()
+    outcome = await run_campaign(real_client, tmp_db, cid, pacing)
+    assert outcome.sent == 3
+    assert len(real_client.sent) == 3
+
+
+@pytest.mark.asyncio
+async def test_reset_contact_send_requeues_contact(tmp_db: Database):
+    """reset_contact_send deletes the (campaign, contact) row so the
+    contact re-enters the send loop on the next run."""
+    _seed(tmp_db, 3)
+    cid = tmp_db.create_campaign("t", "Hi", None, None)
+    pacing = PacingConfig(min_delay_sec=0, max_delay_sec=0, long_pause_every=100,
+                          long_pause_min_sec=0, long_pause_max_sec=0, daily_cap=999)
+
+    first = await run_campaign(FakeClient(), tmp_db, cid, pacing)
+    assert first.sent == 3
+
+    contacts = tmp_db.resolved_contacts()
+    reset_target = contacts[1]["id"]
+    n = tmp_db.reset_contact_send(cid, [reset_target])
+    assert n == 1
+    assert reset_target not in tmp_db.already_sent_ids(cid)
+
+    # The next run should redeliver only to the reset contact.
+    client2 = FakeClient()
+    second = await run_campaign(client2, tmp_db, cid, pacing)
+    assert second.sent == 1
+    assert len(client2.sent) == 1
