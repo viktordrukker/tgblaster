@@ -30,7 +30,11 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8501:8501"
+      # Loopback only. Anyone with network access to the host would
+      # otherwise control the logged-in Telegram session (the UI has no
+      # built-in auth). For remote access, use the prod compose which
+      # fronts the app with Caddy basic-auth, or set TGBLASTER_UI_PASSWORD.
+      - "127.0.0.1:8501:8501"
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0

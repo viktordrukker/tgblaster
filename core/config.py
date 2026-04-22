@@ -4,7 +4,10 @@ Everything has sensible defaults so the app starts even without .env.
 """
 from __future__ import annotations
 
+import logging
 import os
+import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +16,34 @@ try:
     load_dotenv()
 except ImportError:  # dotenv is optional at runtime
     pass
+
+_log = logging.getLogger("tgblaster.config")
+
+
+def _warn_if_env_world_readable() -> None:
+    """Warn (don't fail) when .env is mode wider than 0600 on POSIX systems.
+
+    Owner-only read is the safe posture for a file that holds api_hash and
+    lives in a working directory that may be shared (e.g. bind-mounted
+    into a Docker container). On Windows the Unix permission bits don't
+    apply, so we skip.
+    """
+    if sys.platform.startswith("win"):
+        return
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    try:
+        st_info = env_path.stat()
+    except FileNotFoundError:
+        return
+    perms = stat.S_IMODE(st_info.st_mode)
+    if perms & 0o077:  # any group/other bits set
+        _log.warning(
+            ".env is mode %o; group/other can read credentials. "
+            "Run: chmod 600 %s", perms, env_path,
+        )
+
+
+_warn_if_env_world_readable()
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
