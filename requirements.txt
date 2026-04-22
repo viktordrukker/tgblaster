@@ -1,6 +1,6 @@
 telethon==1.43.1
 streamlit==1.40.2
-pandas==2.2.3
+pandas==3.0.2
 phonenumbers==8.13.50
 python-dotenv==1.0.1
 Pillow==11.3.0
