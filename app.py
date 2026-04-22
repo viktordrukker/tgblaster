@@ -12,13 +12,23 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
+import os
 import re
+import secrets
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+_log = logging.getLogger("tgblaster.ui")
+if not _log.handlers:
+    # Rely on the default root handler Streamlit sets up; this guard is only
+    # for when the module is imported outside streamlit (e.g. in tests).
+    logging.basicConfig(level=logging.INFO)
 
 from core import auth, countries, csv_io, redis_client, template as template_mod
 from core.md import telegram_md_to_html
@@ -90,6 +100,62 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+# --------------------------------------------------------------------------
+# Security helpers
+# --------------------------------------------------------------------------
+
+def safe_error(ctx: str, e: BaseException) -> None:
+    """Log the full exception to the server log; show a redacted banner in UI.
+
+    Telethon/SQLite exceptions can include api_id, session paths, phone
+    fragments, or stack frames referencing local paths. Rendering those via
+    st.error(f"... {e}") exposes them to anyone who can reach the UI. This
+    helper emits the full trace to the log (operator-only) and shows the
+    user a stable error-id they can quote in a bug report.
+    """
+    eid = uuid.uuid4().hex[:8]
+    _log.exception("[%s] %s: %s", eid, ctx, e)
+    st.error(f"{ctx} — внутренняя ошибка (ref {eid}). Подробности в логах.")
+
+
+def _safe_upload_path(name: str, prefix: str = "") -> Path:
+    """Return a path inside UPLOADS_DIR for `name`, rejecting traversal.
+
+    Streamlit's UploadedFile.name already comes from the browser File API,
+    which does not expose path components — but enforcing the invariant
+    server-side means a future upload source (CLI, API) can't bypass it.
+    """
+    base = UPLOADS_DIR.resolve()
+    leaf = Path(name).name  # strip any path components
+    candidate = (base / f"{prefix}{leaf}").resolve()
+    if not candidate.is_relative_to(base):
+        raise ValueError(f"refusing unsafe upload path: {name!r}")
+    return candidate
+
+
+def _ui_auth_gate() -> None:
+    """Optional password gate. If TGBLASTER_UI_PASSWORD is unset (the
+    default), this is a no-op and the app behaves exactly as before.
+    If set, render a simple password prompt and st.stop() until matched.
+    """
+    expected = os.getenv("TGBLASTER_UI_PASSWORD", "").strip()
+    if not expected:
+        return
+    if st.session_state.get("_ui_auth_ok"):
+        return
+    st.markdown("### 🔒 Вход")
+    pw = st.text_input("Пароль", type="password", key="_ui_auth_pw")
+    if pw and secrets.compare_digest(pw, expected):
+        st.session_state["_ui_auth_ok"] = True
+        st.rerun()
+    elif pw:
+        st.error("Неверный пароль.")
+    st.stop()
+
+
+_ui_auth_gate()
 
 
 # --------------------------------------------------------------------------
@@ -345,7 +411,7 @@ def _render_sheet_source_panel(db) -> None:
                             export_url, timeout=30, allow_redirects=True,
                         )
                     except requests.RequestException as e:
-                        st.error(f"Сеть не отдала ответ: {e}")
+                        safe_error("Сеть не отдала ответ", e)
                     else:
                         if resp.status_code != 200 or not resp.content:
                             st.error(
@@ -461,7 +527,7 @@ def _render_sheet_source_panel(db) -> None:
                     )
                 if errors:
                     for e in errors:
-                        st.error(e)
+                        safe_error("Ошибка", e)
                 else:
                     combined = (role_to_cols["phone_or_username"] or [None])[0]
                     column_map = {
@@ -509,7 +575,7 @@ def _run_sheet_source_sync_now(db) -> None:
         resp = requests.get(export_url, timeout=30, allow_redirects=True)
     except requests.RequestException as e:
         prog.empty()
-        st.error(f"Сеть не отдала ответ: {e}")
+        safe_error("Сеть не отдала ответ", e)
         return
     if (
         resp.status_code != 200
@@ -532,7 +598,7 @@ def _run_sheet_source_sync_now(db) -> None:
         )
     except Exception as e:
         prog.empty()
-        st.error(f"Парсер упал: {e}")
+        safe_error("Парсер упал", e)
         return
 
     prog.progress(0.7, text=f"Сохраняю {len(valid)} контактов…")
@@ -793,7 +859,7 @@ def render_setup():
             current.session_path, current.api_id, current.api_hash,
         ))
     except Exception as e:
-        st.error(f"Ошибка подключения: {e}")
+        safe_error("Ошибка подключения", e)
 
     if authorized:
         st.success(f"✅ Аккаунт `{current.label}` подключён.")
@@ -905,7 +971,7 @@ def render_contacts():
                     st.rerun()
                 except Exception as e:
                     prog.empty()
-                    st.error(f"Не смог прочитать CSV: {e}")
+                    safe_error("Не смог прочитать CSV", e)
     with col2:
         example_path = Path(__file__).parent / "data" / "example_contacts.csv"
         if example_path.exists():
@@ -1013,7 +1079,7 @@ def render_contacts():
                     )
                     result = None
             except Exception as e:
-                st.error(f"Ошибка: {e}")
+                safe_error("Ошибка", e)
                 result = None
 
             if result is not None:
@@ -1087,7 +1153,7 @@ def render_contacts():
         except RuntimeError as e:
             st.warning(str(e))
         except Exception as e:
-            st.error(f"Упало: {e} — см. шаг 6 (Log).")
+            safe_error("Упало — см. шаг 6 (Log)", e)
 
     if running_validate:
         st.caption(
@@ -1180,7 +1246,7 @@ def render_contacts():
                     except RuntimeError as e:
                         st.warning(str(e))
                     except Exception as e:
-                        st.error(f"Упало: {e} — см. шаг 6 (Log).")
+                        safe_error("Упало — см. шаг 6 (Log)", e)
 
             # Reachability breakdown — tells the user what WON'T
             # receive a message and why, so the combined button's "we
@@ -1560,7 +1626,7 @@ def render_contacts():
                 except RuntimeError as e:
                     st.warning(str(e))
                 except Exception as e:
-                    st.error(f"Упало: {e} — см. лог задачи ниже.")
+                    safe_error("Упало — см. лог задачи ниже", e)
         with bcol3:
             if st.button(
                 f"✓ Валидировать @usernames ({len(validate_eligible)})",
@@ -1582,7 +1648,7 @@ def render_contacts():
                 except RuntimeError as e:
                     st.warning(str(e))
                 except Exception as e:
-                    st.error(f"Упало: {e} — см. лог задачи ниже.")
+                    safe_error("Упало — см. лог задачи ниже", e)
         with bcol4:
             if st.button(
                 f"🗑 Удалить отмеченные ({len(selected_ids)})",
@@ -1636,7 +1702,7 @@ def render_contacts():
                 except RuntimeError as e:
                     st.warning(str(e))
                 except Exception as e:
-                    st.error(f"Упало: {e} — см. шаг 6 (Log).")
+                    safe_error("Упало — см. шаг 6 (Log)", e)
         with rc_col2:
             if running_readcheck:
                 st.caption(
@@ -2126,7 +2192,7 @@ def render_compose():
             disabled=body_locked,
         )
         if image_file is not None:
-            _img_path = UPLOADS_DIR / image_file.name
+            _img_path = _safe_upload_path(image_file.name)
             _img_path.write_bytes(image_file.getbuffer())
             st.session_state["_compose_current_image_path"] = str(_img_path)
         current_image_path: str | None = (
@@ -2520,7 +2586,7 @@ def render_dryrun():
                 if not client.is_connected():
                     await client.connect()
                 if tf_image_bytes:
-                    img_path = UPLOADS_DIR / f"_testfire_{tf_image_name}"
+                    img_path = _safe_upload_path(tf_image_name, prefix="_testfire_")
                     img_path.write_bytes(tf_image_bytes)
                     await client.send_file(
                         target, file=str(img_path),
@@ -2536,7 +2602,7 @@ def render_dryrun():
                     auth.run_async(_send_test())
                 st.success(f"✅ Отправлено на {target_raw}.")
             except Exception as e:
-                st.error(f"Не ушло: {e}")
+                safe_error("Не ушло", e)
 
 
 # --------------------------------------------------------------------------
@@ -2900,7 +2966,7 @@ def render_campaign():
             except RuntimeError as e:
                 st.warning(str(e))
             except Exception as e:
-                st.error(f"Упало: {e}")
+                safe_error("Упало", e)
 
     with bc2:
         if st.button("⏸ Пауза", disabled=not is_live,
@@ -3173,7 +3239,7 @@ def render_log():
             except RuntimeError as e:
                 st.warning(str(e))
             except Exception as e:  # noqa: BLE001
-                st.error(f"Упало: {e}")
+                safe_error("Упало", e)
 
     @st.fragment(run_every=refresh)
     def _live_log_table():
@@ -3193,6 +3259,47 @@ def render_log():
                 f"🔁 Авто-обновление каждые 2 сек — кампания #{cid} в работе."
             )
 
+        # Reset selected contacts back to "not sent" so the next run picks
+        # them up again. Legal from any state; a running campaign won't
+        # re-send mid-loop (its in-memory skip-set was built at start),
+        # but a Pause→Resume will re-enter them.
+        with st.expander(
+            "🔄 Вернуть контакт в очередь (сбросить статус)",
+            expanded=False,
+        ):
+            log_rows = db.send_log_contacts(int(cid))
+            if not log_rows:
+                st.caption("Пока нет записей в send_log.")
+            else:
+                def _fmt(row):
+                    who = row["name"] or row["tg_username"] or row["phone"] or f"#{row['contact_id']}"
+                    return f"{who}  ·  {row['status']}"
+                row_by_id = {r["contact_id"]: r for r in log_rows}
+                picked = st.multiselect(
+                    "Контакты для сброса",
+                    options=list(row_by_id.keys()),
+                    format_func=lambda cid_: _fmt(row_by_id[cid_]),
+                    key=f"reset_picker_{cid}",
+                    help="Удалит их записи в send_log — при следующем "
+                         "запуске они снова попадут в рассылку.",
+                )
+                col_r, col_h = st.columns([1, 4])
+                with col_r:
+                    if st.button(
+                        "↺ Сбросить",
+                        key=f"reset_btn_{cid}",
+                        disabled=not picked,
+                    ):
+                        n = db.reset_contact_send(int(cid), picked)
+                        st.toast(f"Сброшено: {n}", icon="✅")
+                        st.rerun()
+                with col_h:
+                    st.caption(
+                        "Бой-запущенная кампания использует кеш уже-"
+                        "отправленных в памяти — чтобы сброшенные "
+                        "контакты попали в доставку, поставь Pause→Resume."
+                    )
+
         display_df = fresh_df.copy()
         if "read_at" in display_df.columns:
             # Only precise matches survive — we only flag rows whose
@@ -3209,7 +3316,12 @@ def render_log():
             st.download_button(
                 "⬇️ Скачать CSV",
                 # utf-8-sig adds a BOM so Excel reads Cyrillic correctly.
-                data=fresh_df.to_csv(index=False).encode("utf-8-sig"),
+                # Sanitise any cell that would be interpreted as a formula.
+                data=(
+                    csv_io.sanitize_for_csv_export(fresh_df)
+                    .to_csv(index=False)
+                    .encode("utf-8-sig")
+                ),
                 file_name=f"campaign_{cid}_log.csv",
                 mime="text/csv",
                 key=f"log_csv_{cid}",

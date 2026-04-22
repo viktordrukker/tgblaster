@@ -8,11 +8,15 @@ Design goals:
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
+
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 SCHEMA = """
@@ -233,22 +237,29 @@ class Database:
             raise
 
     @staticmethod
-    def _retry_on_lock(op, attempts: int = 4, backoff: float = 0.3):
+    def _retry_on_lock(op, attempts: int = 8, backoff: float = 0.2):
         """Run a sqlite-touching callable and retry on transient
         'database is locked' errors. The `_conn()` context manager's
         busy_timeout already covers most contention; this is the belt
         around the suspenders for the hot writes on the send path —
-        `record_send`, `mark_job_*`, `update_job_progress`."""
+        `record_send`, `mark_job_*`, `update_job_progress`.
+
+        Exponential backoff: 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8, 25.6 s
+        (cumulative ~50 s worst case). The earlier 4 × linear backoff
+        (~3 s total) was too short under WSL2 bind-mount jitter plus
+        concurrent Telethon session writes — callers gave up mid-
+        contention and the UI surfaced spurious `database is locked`
+        errors."""
         last_err: sqlite3.OperationalError | None = None
-        for attempt in range(1, attempts + 1):
+        import time as _time
+        for attempt in range(attempts):
             try:
                 return op()
             except sqlite3.OperationalError as e:
                 if "locked" not in str(e).lower():
                     raise
                 last_err = e
-                import time as _time
-                _time.sleep(backoff * attempt)
+                _time.sleep(backoff * (2 ** attempt))
         if last_err is not None:
             raise last_err
         return None  # pragma: no cover - unreachable
@@ -396,7 +407,8 @@ class Database:
                 q += f" AND id IN ({placeholders})"
                 params.extend(int(x) for x in ids)
             if limit:
-                q += f" LIMIT {int(limit)}"
+                q += " LIMIT ?"
+                params.append(int(limit))
             return list(c.execute(q, params))
 
     def mark_resolved(self, contact_id: int, tg_user_id: int, username: str | None,
@@ -667,6 +679,12 @@ class Database:
         if not updates:
             return False
 
+        # Defence-in-depth: reject any key that is not a plain identifier
+        # before f-stringing it into SQL, even though `all_allowed` already
+        # filtered by membership. A future allowlist typo shouldn't become
+        # SQLi.
+        if not all(_IDENTIFIER_RE.match(k) for k in updates):
+            raise ValueError(f"unsafe column names in updates: {list(updates)!r}")
         cols = ", ".join(f"{k}=?" for k in updates)
         values = list(updates.values()) + [int(contact_id)]
         with self._conn() as c:
@@ -1193,6 +1211,39 @@ class Database:
                 (new_state, int(campaign_id)),
             )
             return True
+
+    def send_log_contacts(self, campaign_id: int) -> list[dict]:
+        """Return (contact_id, name, phone, tg_username, status) for every
+        send_log row of a campaign — used by the UI's "reset contact"
+        picker to re-queue specific recipients."""
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT c.id AS contact_id, c.name, c.phone, c.tg_username,
+                          s.status
+                   FROM send_log s JOIN contacts c ON c.id = s.contact_id
+                   WHERE s.campaign_id=? ORDER BY c.name""",
+                (int(campaign_id),),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def reset_contact_send(self, campaign_id: int,
+                            contact_ids: list[int]) -> int:
+        """Delete send_log rows for specific (campaign, contact) pairs so
+        those contacts re-enter the send loop on the next run. Returns
+        the number of rows deleted. No-op for contacts that don't have
+        a row yet. Legal from any campaign state — the next run picks
+        them up via `already_sent_ids` naturally."""
+        if not contact_ids:
+            return 0
+        id_list = [int(x) for x in contact_ids]
+        placeholders = ",".join("?" * len(id_list))
+        with self._conn() as c:
+            cur = c.execute(
+                f"DELETE FROM send_log "
+                f"WHERE campaign_id=? AND contact_id IN ({placeholders})",
+                (int(campaign_id), *id_list),
+            )
+            return cur.rowcount
 
     def reset_campaign_progress(self, campaign_id: int) -> int:
         """Wipe every `send_log` row for a campaign AND reset the campaign

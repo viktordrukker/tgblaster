@@ -247,6 +247,36 @@ def contacts_to_db_rows(contacts: list[Contact]) -> list[dict]:
     ]
 
 
+# Cells whose first char is one of these trigger formula evaluation in
+# Excel / Google Sheets / LibreOffice Calc when a user opens an exported
+# CSV. Neutralise by prefixing a single quote. Phone columns stored as
+# normalised E.164 start with `+<digit>` and are safe — Excel treats
+# `+1...` as a string once it sees a non-formula continuation, but we
+# still want belt-and-braces for the case where a malicious name or
+# extra column starts with `=`, `+`, `-`, `@`, `\t`, `\r`.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_sanitise_cell(v):
+    """Return `v` with a leading quote when it would be interpreted as a
+    formula by spreadsheet software. Leaves non-string values alone.
+    """
+    if isinstance(v, str) and v and v[0] in _CSV_FORMULA_PREFIXES:
+        return "'" + v
+    return v
+
+
+def sanitize_for_csv_export(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Return a copy of `df` with every string cell neutralised against
+    CSV formula injection. Non-string dtypes are untouched.
+    """
+    out = df.copy()
+    for col in out.columns:
+        if out[col].dtype == object:
+            out[col] = out[col].map(_csv_sanitise_cell)
+    return out
+
+
 def _normalize_username(raw: str | None) -> str | None:
     """Strip '@', whitespace, wrapping URLs. Returns None for empty/invalid."""
     if not raw:
