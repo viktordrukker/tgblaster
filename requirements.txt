@@ -1,5 +1,5 @@
 telethon==1.43.2
-streamlit==1.56.0
+streamlit==1.57.0
 pandas==2.2.3
 phonenumbers==8.13.50
 python-dotenv==1.2.2
