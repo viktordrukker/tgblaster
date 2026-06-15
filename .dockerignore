@@ -14,16 +14,34 @@ pytest-cache-files-*
 .DS_Store
 node_modules
 
-# State/secrets
+# State/secrets — recursive so nested copies (e.g. data/backups/, bot-stack/data/)
+# can never be baked into the image regardless of build path.
 sessions/*
 !sessions/.gitkeep
 data/*.db
 data/*.db-journal
+data/backups/
 uploads/*
 !uploads/.gitkeep
 .env
-*.session
-*.session-journal
+**/.env
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/*.session
+**/*.session-journal
+**/*.session-shm
+**/*.session-wal
+
+# Other stacks / non-blaster trees — NOT part of the MTProto blaster image.
+# bot-stack ships its OWN registrant DBs/backups + BOT_TOKEN; it must never
+# enter this build context.
+bot-stack/
+bridges/
+launcher/
+screenshots/
+docs/screenshots/
 
 # Docs/build outputs we don't need in the image
 *.log

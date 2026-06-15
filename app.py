@@ -136,11 +136,20 @@ def _safe_upload_path(name: str, prefix: str = "") -> Path:
 
 
 def _ui_auth_gate() -> None:
-    """Optional password gate. If TGBLASTER_UI_PASSWORD is unset (the
-    default), this is a no-op and the app behaves exactly as before.
-    If set, render a simple password prompt and st.stop() until matched.
+    """Password gate. Locally (no container) an unset TGBLASTER_UI_PASSWORD is a
+    no-op for convenience. On the server (IN_DOCKER=1) it is FAIL-CLOSED: the
+    deployed stack runs the app on a private network behind Cloudflare Access
+    (the primary SSO gate), and this password is the in-app backstop that keeps
+    the UI fail-closed even if the Access policy is ever misconfigured. A missing
+    or short (<32 char) value must REFUSE to serve, never silently open.
     """
     expected = os.getenv("TGBLASTER_UI_PASSWORD", "").strip()
+    if os.getenv("IN_DOCKER") == "1" and len(expected) < 32:
+        st.error(
+            "Сервер сконфигурирован небезопасно: переменная TGBLASTER_UI_PASSWORD "
+            "не задана или короче 32 символов. Доступ заблокирован."
+        )
+        st.stop()
     if not expected:
         return
     if st.session_state.get("_ui_auth_ok"):
@@ -203,15 +212,24 @@ def _backend_badge() -> str:
     return "🟡 In-process threads"
 
 
-def is_authorized_cached(settings, ttl_sec: float = 8.0) -> bool:
+def is_authorized_cached(settings, ttl_sec: float = 60.0) -> bool:
     """UI-level cache for ``auth.is_authorized``.
 
     Nav clicks re-render the whole script; each render was calling
     ``auth.run_async(auth.is_authorized(...))`` which opens/locks the
     Telethon SQLiteSession. During worker contention that single call
     can block ~3 s per render — bad UX. Cache the result per
-    (session_path, api_id) for a few seconds so back-to-back reruns
-    don't re-hit the session file.
+    (session_path, api_id) so back-to-back reruns don't re-hit the
+    session file.
+
+    TTL tuned to 60s in 2026-04: every expiry triggers a Telethon
+    connection supervisor round-trip that writes the session file,
+    racing the worker's validate/resolve writes. Users don't need
+    sub-minute freshness on auth state (de-auth is rare and the next
+    real action re-checks anyway), but the worker very much needs
+    fewer concurrent session writers. Login flows still force a
+    real check via their own paths — the cache only gates the
+    passive sidebar indicator.
     """
     if not getattr(settings, "has_credentials", False):
         return False

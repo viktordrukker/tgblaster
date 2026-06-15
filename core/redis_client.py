@@ -12,6 +12,7 @@ The whole system is designed to work in two modes:
 from __future__ import annotations
 
 import os
+import re
 import logging
 from functools import lru_cache
 from typing import Optional
@@ -26,6 +27,11 @@ def redis_url() -> str:
     return os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
+def _redact(url: str) -> str:
+    """Hide any userinfo (password) in a redis URL before it hits the logs."""
+    return re.sub(r"://[^@/]*@", "://***@", url)
+
+
 @lru_cache(maxsize=1)
 def get_client() -> Optional[redis.Redis]:
     """Return a connected Redis client, or None if Redis isn't reachable.
@@ -36,10 +42,10 @@ def get_client() -> Optional[redis.Redis]:
     try:
         client = redis.Redis.from_url(url, socket_connect_timeout=1, socket_timeout=2)
         client.ping()
-        log.info("Connected to Redis at %s", url)
+        log.info("Connected to Redis at %s", _redact(url))
         return client
     except Exception as e:  # noqa: BLE001
-        log.info("Redis not reachable at %s (%s) — falling back to in-process mode", url, e)
+        log.info("Redis not reachable at %s (%s) — falling back to in-process mode", _redact(url), e)
         return None
 
 

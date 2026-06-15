@@ -17,6 +17,7 @@ from telethon.errors import FloodWaitError, UsernameNotOccupiedError, UsernameIn
 from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
 from telethon.tl.types import InputPhoneContact
 
+from .auth import tg_session_lock
 from .database import Database
 
 
@@ -86,6 +87,7 @@ async def resolve_pending(
 
     imported_user_ids: list[int] = []
     done = 0
+    session_path = getattr(client.session, "filename", None)
 
     for batch_start in range(0, total, BATCH_SIZE):
         batch = pending[batch_start: batch_start + BATCH_SIZE]
@@ -105,14 +107,16 @@ async def resolve_pending(
         row_by_client_id = {row["id"]: row for row in batch}
 
         try:
-            result = await client(ImportContactsRequest(contacts=input_contacts))
+            async with tg_session_lock(session_path):
+                result = await client(ImportContactsRequest(contacts=input_contacts))
         except FloodWaitError as e:
             wait = int(getattr(e, "seconds", 30)) + 5
             _log(f"⏱ FloodWait — жду {wait} сек…")
             await _emit(done)
             await asyncio.sleep(wait)
             try:
-                result = await client(ImportContactsRequest(contacts=input_contacts))
+                async with tg_session_lock(session_path):
+                    result = await client(ImportContactsRequest(contacts=input_contacts))
                 _log("✓ Ретрай после FloodWait прошёл.")
             except Exception as e2:  # pragma: no cover
                 _log(f"✗ Батч #{batch_num} упал после ретрая: {e2}")
@@ -183,11 +187,13 @@ async def resolve_pending(
             entities = []
             for uid in imported_user_ids:
                 try:
-                    entities.append(await client.get_input_entity(uid))
+                    async with tg_session_lock(session_path):
+                        entities.append(await client.get_input_entity(uid))
                 except Exception:  # noqa: BLE001
                     continue
             if entities:
-                await client(DeleteContactsRequest(id=entities))
+                async with tg_session_lock(session_path):
+                    await client(DeleteContactsRequest(id=entities))
             _log("✓ Контакты удалены из Telegram.")
         except Exception as e:  # noqa: BLE001
             log.warning("Cleanup of imported contacts failed: %s", e)
@@ -221,9 +227,11 @@ async def resolve_one_phone(
         first_name=(name or f"contact_{contact_id}")[:64],
         last_name="",
     )
+    session_path = getattr(client.session, "filename", None)
 
     try:
-        result = await client(ImportContactsRequest(contacts=[input_contact]))
+        async with tg_session_lock(session_path):
+            result = await client(ImportContactsRequest(contacts=[input_contact]))
     except FloodWaitError as e:
         wait = int(getattr(e, "seconds", 30))
         db.mark_resolve_error(contact_id, f"flood_wait: wait {wait}s")
@@ -251,10 +259,11 @@ async def resolve_one_phone(
 
     if cleanup_imported:
         try:
-            entity = await client.get_input_entity(imp.user_id)
-            await client(DeleteContactsRequest(id=[entity]))
+            async with tg_session_lock(session_path):
+                entity = await client.get_input_entity(imp.user_id)
+                await client(DeleteContactsRequest(id=[entity]))
         except Exception as e:  # noqa: BLE001
-            log.warning("Cleanup of imported contact %s failed: %s", phone, e)
+            log.warning("Cleanup of imported contact id=%s failed: %s", contact_id, e)
 
     return {"status": "resolved", "tg_user_id": imp.user_id,
             "username": username,
@@ -281,9 +290,11 @@ async def resolve_one_username(
     out = {"status": "error", "contact_id": existing_contact_id,
            "tg_user_id": None, "username": None,
            "tg_first_name": None, "tg_last_name": None, "error": None}
+    session_path = getattr(client.session, "filename", None)
 
     try:
-        entity = await client.get_entity(hint)
+        async with tg_session_lock(session_path):
+            entity = await client.get_entity(hint)
     except (UsernameNotOccupiedError, UsernameInvalidError) as e:
         out["status"] = "not_on_telegram"
         out["error"] = str(e)
@@ -376,10 +387,13 @@ async def validate_pending_usernames(
     _log(f"Старт валидации: {total} @username, пауза {inter_call_sleep_sec} сек между запросами.")
     await _emit(0)
 
+    session_path = getattr(client.session, "filename", None)
+
     for idx, row in enumerate(rows, start=1):
         hint = row["tg_username_hint"]
         try:
-            entity = await client.get_entity(hint)
+            async with tg_session_lock(session_path):
+                entity = await client.get_entity(hint)
         except (UsernameNotOccupiedError, UsernameInvalidError):
             db.mark_resolve_error(row["id"], f"username @{hint} not found")
             stats["not_on_telegram"] += 1
@@ -390,7 +404,8 @@ async def validate_pending_usernames(
             await _emit(idx, current=hint)
             await asyncio.sleep(wait)
             try:
-                entity = await client.get_entity(hint)
+                async with tg_session_lock(session_path):
+                    entity = await client.get_entity(hint)
             except Exception as e2:  # noqa: BLE001
                 db.mark_resolve_error(row["id"], f"retry failed: {e2}")
                 stats["errors"] += 1
@@ -409,7 +424,7 @@ async def validate_pending_usernames(
                 stats["errors"] += 1
                 _log(f"! @{hint}: пустая сущность после ретрая")
         except Exception as e:  # noqa: BLE001
-            log.warning("validate_username(%s) failed: %s", hint, e)
+            log.warning("validate_username for contact id=%s failed: %s", row["id"], e)
             db.mark_resolve_error(row["id"], str(e))
             stats["errors"] += 1
             _log(f"! @{hint}: {e}")
