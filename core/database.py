@@ -309,6 +309,32 @@ class Database:
             if new_readat:
                 c.execute("ALTER TABLE send_log ADD COLUMN read_at TEXT")
 
+            # Phase H3 (parent) — composite indexes on the hottest read
+            # paths. Each is idempotent via IF NOT EXISTS.
+            for stmt in (
+                # reserve_send / confirm_send hot pair lookup.
+                "CREATE INDEX IF NOT EXISTS idx_send_log_pair "
+                    "ON send_log(campaign_id, contact_id)",
+                # already_sent_ids() — campaign + status='sent' subset.
+                "CREATE INDEX IF NOT EXISTS idx_send_log_sent "
+                    "ON send_log(campaign_id) WHERE status='sent'",
+                # resolved_contacts() — filtered scan of contacts.
+                "CREATE INDEX IF NOT EXISTS idx_contacts_resolved "
+                    "ON contacts(resolve_status) WHERE resolve_status='resolved'",
+                # opt_outs lookup in tight per-contact loop.
+                "CREATE INDEX IF NOT EXISTS idx_opt_outs_tg_user "
+                    "ON opt_outs(tg_user_id)",
+                # jobs.last_heartbeat watchdog scan.
+                "CREATE INDEX IF NOT EXISTS idx_jobs_running_hb "
+                    "ON jobs(status, last_heartbeat) WHERE status='running'",
+            ):
+                try:
+                    c.execute(stmt)
+                except sqlite3.OperationalError:
+                    # Pre-Phase-H schema may lack the column; ignore
+                    # so older deployments don't crash on first boot.
+                    pass
+
         # One-shot migration: wipe any rows that got a false-positive
         # `read_at` from the removed coarse fallback. Runs outside the
         # schema-setup txn so a rollback inside `executescript` doesn't
@@ -413,29 +439,35 @@ class Database:
 
     def mark_resolved(self, contact_id: int, tg_user_id: int, username: str | None,
                       access_hash: int | None) -> None:
-        with self._conn() as c:
-            c.execute(
-                """UPDATE contacts SET tg_user_id=?, tg_username=?, tg_access_hash=?,
-                   resolved_at=?, resolve_status='resolved', resolve_error=NULL
-                   WHERE id=?""",
-                (tg_user_id, username, access_hash, datetime.now(timezone.utc).isoformat(), contact_id),
-            )
+        def _do():
+            with self._conn() as c:
+                c.execute(
+                    """UPDATE contacts SET tg_user_id=?, tg_username=?, tg_access_hash=?,
+                       resolved_at=?, resolve_status='resolved', resolve_error=NULL
+                       WHERE id=?""",
+                    (tg_user_id, username, access_hash, datetime.now(timezone.utc).isoformat(), contact_id),
+                )
+        self._retry_on_lock(_do)
 
     def mark_not_on_tg(self, contact_id: int) -> None:
-        with self._conn() as c:
-            c.execute(
-                """UPDATE contacts SET resolve_status='not_on_telegram',
-                   resolved_at=? WHERE id=?""",
-                (datetime.now(timezone.utc).isoformat(), contact_id),
-            )
+        def _do():
+            with self._conn() as c:
+                c.execute(
+                    """UPDATE contacts SET resolve_status='not_on_telegram',
+                       resolved_at=? WHERE id=?""",
+                    (datetime.now(timezone.utc).isoformat(), contact_id),
+                )
+        self._retry_on_lock(_do)
 
     def mark_resolve_error(self, contact_id: int, error: str) -> None:
-        with self._conn() as c:
-            c.execute(
-                """UPDATE contacts SET resolve_status='error', resolve_error=?,
-                   resolved_at=? WHERE id=?""",
-                (error[:500], datetime.now(timezone.utc).isoformat(), contact_id),
-            )
+        def _do():
+            with self._conn() as c:
+                c.execute(
+                    """UPDATE contacts SET resolve_status='error', resolve_error=?,
+                       resolved_at=? WHERE id=?""",
+                    (error[:500], datetime.now(timezone.utc).isoformat(), contact_id),
+                )
+        self._retry_on_lock(_do)
 
     # --- cheap counts — the sidebar / KPI metrics used to do
     # `len(all_contacts_df())` which loads every row into pandas just to

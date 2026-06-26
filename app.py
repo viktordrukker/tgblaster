@@ -1010,7 +1010,7 @@ def render_contacts():
         "Введи **телефон** (+7…) или **@username** / ссылку t.me/… — сам разберусь. "
         "Имя возьму из профиля Telegram, если в поле ниже пусто."
     )
-    current_settings = load_settings()
+    current_settings = get_settings()
     try:
         authorized = auth.run_async(auth.is_authorized(
             current_settings.session_path,
@@ -2509,7 +2509,7 @@ def render_dryrun():
     )
 
     if st.button("🧪 Отправить тест себе в Избранное", type="primary"):
-        settings = load_settings()
+        settings = get_settings()
         client = auth.get_client(settings.session_path, settings.api_id, settings.api_hash)
         runner = CampaignRunner(
             client=client, db=db, campaign_id=cid,
@@ -2549,7 +2549,7 @@ def render_dryrun():
         "не привязано к кампании. Для быстрой проверки шаблона или картинки."
     )
 
-    settings = load_settings()
+    settings = get_settings()
     try:
         tf_authorized = auth.run_async(auth.is_authorized(
             settings.session_path, settings.api_id, settings.api_hash,
@@ -2767,7 +2767,7 @@ def render_campaign():
                     st.session_state[f"pending_delta_send_{cid}"] = materialized
                     st.toast("✅ Аудитория применена — ниже жми «Поставить в очередь».", icon="🎯")
 
-    settings = load_settings()
+    settings = get_settings()
     col1, col2, col3 = st.columns(3)
     with col1:
         min_d = st.number_input("Мин задержка, сек", 0, 3600, settings.min_delay_sec)

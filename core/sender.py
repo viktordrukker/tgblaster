@@ -29,6 +29,7 @@ from telethon.errors import (
     ChatWriteForbiddenError,
     InputUserDeactivatedError,
 )
+from telethon.tl.functions.users import GetFullUserRequest
 
 from .database import Database
 from .rate_limiter import Pacer, PacingConfig
@@ -362,28 +363,42 @@ async def run_campaign(
 
             except PeerFloodError:
                 # PeerFloodError is per-peer — one flagged contact doesn't
-                # mean the account is banned (confirmed via @SpamBot). We
-                # skip this peer and continue; only if PEER_FLOOD_STOP_
-                # THRESHOLD distinct peers raise it in one run do we treat
-                # the account as at risk and bail.
-                peer_flood_seen.add(int(contact["id"]))
-                _maybe_safe_confirm(contact["id"], "skipped",
-                                    "PeerFloodError (per-peer)")
+                # mean the account is banned (confirmed via @SpamBot). A
+                # common cause is users who require PAID messages (Stars)
+                # from non-contacts: that's a per-user paywall, NOT an
+                # account spam-flag, so we skip them WITHOUT counting toward
+                # the account-protection stop. Only genuine (non-paid)
+                # PeerFloods accrue toward PEER_FLOOD_STOP_THRESHOLD.
+                paid_stars = 0
+                try:
+                    _full = await client(GetFullUserRequest(target_id))
+                    paid_stars = int(getattr(
+                        _full.full_user, "send_paid_messages_stars", 0) or 0)
+                except Exception:  # noqa: BLE001
+                    paid_stars = 0
                 outcome.skipped += 1
-                if len(peer_flood_seen) >= PEER_FLOOD_STOP_THRESHOLD:
-                    log.error(
-                        "PeerFloodError on %d distinct peers — "
-                        "stopping to protect the account",
-                        len(peer_flood_seen),
-                    )
-                    outcome.stopped_reason = "peer_flood"
-                    await _emit(status="peer_flood",
-                                current=contact["name"],
-                                detail=f"{len(peer_flood_seen)} peers flagged")
-                    break
-                await _emit(status="skipped",
-                            current=contact["name"],
-                            detail="PeerFloodError (per-peer)")
+                if paid_stars:
+                    _maybe_safe_confirm(contact["id"], "skipped",
+                                        f"paid-message peer ({paid_stars}⭐)")
+                    await _emit(status="skipped", current=contact["name"],
+                                detail=f"paid-message peer ({paid_stars}⭐)")
+                else:
+                    peer_flood_seen.add(int(contact["id"]))
+                    _maybe_safe_confirm(contact["id"], "skipped",
+                                        "PeerFloodError (per-peer)")
+                    if len(peer_flood_seen) >= PEER_FLOOD_STOP_THRESHOLD:
+                        log.error(
+                            "PeerFloodError on %d distinct non-paid peers — "
+                            "stopping to protect the account",
+                            len(peer_flood_seen),
+                        )
+                        outcome.stopped_reason = "peer_flood"
+                        await _emit(status="peer_flood",
+                                    current=contact["name"],
+                                    detail=f"{len(peer_flood_seen)} peers flagged")
+                        break
+                    await _emit(status="skipped", current=contact["name"],
+                                detail="PeerFloodError (per-peer)")
 
             except (UserPrivacyRestrictedError, UserIsBlockedError,
                     ChatWriteForbiddenError, InputUserDeactivatedError) as e:

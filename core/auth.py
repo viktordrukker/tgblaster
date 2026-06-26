@@ -21,6 +21,8 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import SQLiteSession
 
+from . import locks as _locks
+
 
 class _PatientSession(SQLiteSession):
     """Telethon SQLite session that tolerates concurrent UI+worker access.
@@ -34,25 +36,24 @@ class _PatientSession(SQLiteSession):
 
     def _cursor(self):
         if self._conn is None:
-            # `timeout=15` gives Telethon's post-send `process_entities`
-            # write a generous window to land when the UI's auth-check
-            # or login flow is holding the session file. An earlier
-            # 3s bound was too short: under worker contention the post-
-            # send bookkeeping raised 'database is locked', which our
-            # sender then mis-categorized as delivery failure and the
-            # next run DUPLICATED the message on Telegram (Telethon
-            # 1.43's send_message auto-generates random_id, so server-
-            # side dedup does not save us). 15s is still well under the
-            # worker's 60s per-send RPC timeout, so it doesn't mask a
-            # truly stuck send.
+            # `timeout=60` covers Telethon's background tasks (connection
+            # supervisor, update pump, `process_entities`) that write to
+            # the session file outside any application-level lock. The
+            # Redis `tg_session_lock` added in 2026-04 serializes explicit
+            # RPCs from both containers but can't reach Telethon's
+            # internal writes — those still need a generous SQLite busy
+            # wait. 15s was the previous bound and validate jobs with
+            # 8+ usernames still occasionally exceeded it. 60s matches
+            # the worker's per-send RPC timeout, so we never mask a
+            # genuinely stuck connection.
             self._conn = sqlite3.connect(
                 self.filename,
                 check_same_thread=False,
-                timeout=15,
+                timeout=60,
             )
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL")
-                self._conn.execute("PRAGMA busy_timeout=15000")
+                self._conn.execute("PRAGMA busy_timeout=60000")
             except sqlite3.Error:
                 pass
         return self._conn.cursor()
@@ -80,6 +81,33 @@ class LoginState:
 
 def _client_key(session_path: Path | str, api_id: int, api_hash: str) -> _ClientKey:
     return (str(session_path), int(api_id), str(api_hash))
+
+
+def tg_session_lock(session_path: Path | str, *,
+                    ttl_sec: int = 60, timeout_sec: float = 45.0):
+    """Distributed lock serializing access to a Telethon SQLiteSession
+    file across processes that share it.
+
+    In the docker-compose stack the UI container and the arq worker both
+    mount the same `sessions/` volume and open their own TelegramClient
+    against the same `.session` file. Concurrent writes from both sides
+    overwhelm the session SQLite's `busy_timeout`, surfacing as
+    'database is locked' during Telegram RPC calls (see
+    `_PatientSession` — busy_timeout=15 s was already insufficient
+    under validate/resolve load).
+
+    Usage:
+        async with tg_session_lock(session_path):
+            await client(SomeRequest(...))
+
+    Standalone mode (no Redis) falls back to a local threading lock,
+    which is exactly right because there's only one process in that
+    mode — no cross-process contention to guard against.
+    """
+    return _locks.held_async(
+        f"tg_session:{Path(session_path).resolve()}",
+        ttl_sec=ttl_sec, timeout_sec=timeout_sec,
+    )
 
 
 def get_client(session_path: Path | str, api_id: int, api_hash: str) -> TelegramClient:
@@ -123,13 +151,23 @@ async def connect_client(client: TelegramClient, attempts: int = 3,
     Tuned for UI paths: 3 attempts × (0.4, 0.8, 1.2) s ≈ ~2.4 s worst case.
     Worker paths that can tolerate longer waits should call this with
     larger `attempts`/`backoff_sec`.
+
+    Acquires `tg_session_lock` around `client.connect()` so the UI's
+    reconnect storm and the worker's connects can't race each other
+    for the session file — the scenario that drove us to add this lock
+    in the first place.
     """
     if client.is_connected():
         return
+    session_path = getattr(client.session, "filename", None)
     last_err: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            await client.connect()
+            if session_path:
+                async with tg_session_lock(session_path):
+                    await client.connect()
+            else:
+                await client.connect()
             return
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():

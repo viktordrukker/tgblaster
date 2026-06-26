@@ -10,6 +10,7 @@ doesn't care.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import threading
@@ -162,3 +163,50 @@ class held:
     def __exit__(self, *exc):
         if self.handle is not None:
             release(self.handle)
+
+
+async def acquire_blocking_async(
+    key: str, ttl_sec: int = 60, timeout_sec: float = 30.0,
+    retry_interval: float = 0.05,
+) -> Optional[LockHandle]:
+    """Poll `try_acquire` until it succeeds or `timeout_sec` elapses.
+
+    Returns the handle, or None on timeout. `retry_interval` is short
+    (50 ms) because critical sections we gate are typically RPC-hop
+    short; a longer interval would add avoidable latency when the peer
+    releases quickly. Redis set-NX itself is ~0.1 ms on a local socket.
+    """
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        handle = try_acquire(key, ttl_sec=ttl_sec)
+        if handle is not None:
+            return handle
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(retry_interval)
+
+
+class held_async:
+    """Async context manager version of `held`.
+
+    `async with held_async("key") as h:` — yields a LockHandle or None.
+    On acquire timeout, yields None (callers may choose to proceed — the
+    lock is advisory, not a correctness gate). Always safe to release.
+    """
+
+    def __init__(self, key: str, ttl_sec: int = 60, timeout_sec: float = 30.0):
+        self.key = key
+        self.ttl_sec = ttl_sec
+        self.timeout_sec = timeout_sec
+        self.handle: Optional[LockHandle] = None
+
+    async def __aenter__(self):
+        self.handle = await acquire_blocking_async(
+            self.key, ttl_sec=self.ttl_sec, timeout_sec=self.timeout_sec,
+        )
+        return self.handle
+
+    async def __aexit__(self, *exc):
+        if self.handle is not None:
+            release(self.handle)
+            self.handle = None
