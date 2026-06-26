@@ -136,11 +136,20 @@ def _safe_upload_path(name: str, prefix: str = "") -> Path:
 
 
 def _ui_auth_gate() -> None:
-    """Optional password gate. If TGBLASTER_UI_PASSWORD is unset (the
-    default), this is a no-op and the app behaves exactly as before.
-    If set, render a simple password prompt and st.stop() until matched.
+    """Password gate. Locally (no container) an unset TGBLASTER_UI_PASSWORD is a
+    no-op for convenience. On the server (IN_DOCKER=1) it is FAIL-CLOSED: the
+    deployed stack runs the app on a private network behind Cloudflare Access
+    (the primary SSO gate), and this password is the in-app backstop that keeps
+    the UI fail-closed even if the Access policy is ever misconfigured. A missing
+    or short (<32 char) value must REFUSE to serve, never silently open.
     """
     expected = os.getenv("TGBLASTER_UI_PASSWORD", "").strip()
+    if os.getenv("IN_DOCKER") == "1" and len(expected) < 32:
+        st.error(
+            "Сервер сконфигурирован небезопасно: переменная TGBLASTER_UI_PASSWORD "
+            "не задана или короче 32 символов. Доступ заблокирован."
+        )
+        st.stop()
     if not expected:
         return
     if st.session_state.get("_ui_auth_ok"):
@@ -203,15 +212,24 @@ def _backend_badge() -> str:
     return "🟡 In-process threads"
 
 
-def is_authorized_cached(settings, ttl_sec: float = 8.0) -> bool:
+def is_authorized_cached(settings, ttl_sec: float = 60.0) -> bool:
     """UI-level cache for ``auth.is_authorized``.
 
     Nav clicks re-render the whole script; each render was calling
     ``auth.run_async(auth.is_authorized(...))`` which opens/locks the
     Telethon SQLiteSession. During worker contention that single call
     can block ~3 s per render — bad UX. Cache the result per
-    (session_path, api_id) for a few seconds so back-to-back reruns
-    don't re-hit the session file.
+    (session_path, api_id) so back-to-back reruns don't re-hit the
+    session file.
+
+    TTL tuned to 60s in 2026-04: every expiry triggers a Telethon
+    connection supervisor round-trip that writes the session file,
+    racing the worker's validate/resolve writes. Users don't need
+    sub-minute freshness on auth state (de-auth is rare and the next
+    real action re-checks anyway), but the worker very much needs
+    fewer concurrent session writers. Login flows still force a
+    real check via their own paths — the cache only gates the
+    passive sidebar indicator.
     """
     if not getattr(settings, "has_credentials", False):
         return False
@@ -992,7 +1010,7 @@ def render_contacts():
         "Введи **телефон** (+7…) или **@username** / ссылку t.me/… — сам разберусь. "
         "Имя возьму из профиля Telegram, если в поле ниже пусто."
     )
-    current_settings = load_settings()
+    current_settings = get_settings()
     try:
         authorized = auth.run_async(auth.is_authorized(
             current_settings.session_path,
@@ -2491,7 +2509,7 @@ def render_dryrun():
     )
 
     if st.button("🧪 Отправить тест себе в Избранное", type="primary"):
-        settings = load_settings()
+        settings = get_settings()
         client = auth.get_client(settings.session_path, settings.api_id, settings.api_hash)
         runner = CampaignRunner(
             client=client, db=db, campaign_id=cid,
@@ -2531,7 +2549,7 @@ def render_dryrun():
         "не привязано к кампании. Для быстрой проверки шаблона или картинки."
     )
 
-    settings = load_settings()
+    settings = get_settings()
     try:
         tf_authorized = auth.run_async(auth.is_authorized(
             settings.session_path, settings.api_id, settings.api_hash,
@@ -2749,7 +2767,7 @@ def render_campaign():
                     st.session_state[f"pending_delta_send_{cid}"] = materialized
                     st.toast("✅ Аудитория применена — ниже жми «Поставить в очередь».", icon="🎯")
 
-    settings = load_settings()
+    settings = get_settings()
     col1, col2, col3 = st.columns(3)
     with col1:
         min_d = st.number_input("Мин задержка, сек", 0, 3600, settings.min_delay_sec)

@@ -145,6 +145,35 @@ See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for every setting.
 
 ---
 
+## Bot stack (optional, fully independent)
+
+A separate Telegram registration-bot deployment lives at
+[`bot-stack/`](./bot-stack/). Replaces a Google Form for meetup
+signups; broadcasts via the Bot API (no `PeerFloodError`, opt-in
+audience). Has its own Dockerfile, `docker-compose.yml`, SQLite, Redis,
+and Streamlit admin (port **8502**).
+
+**It does not share code with the MTProto stack.** You can deploy it
+alone on a host that doesn't even have this repo's parent stack
+installed. See [`bot-stack/README.md`](./bot-stack/README.md) for the
+walkthrough.
+
+An optional one-way bridge at
+[`bridges/mtproto-sync/`](./bridges/mtproto-sync/) syncs bot
+registrants into this stack's `contacts` table for MTProto broadcasts,
+if you want both paths.
+
+A unified [launcher](./launcher/) on port `8500` lets you pick between
+the two stacks from one landing page. Convenience wrapper to bring
+everything up:
+
+```sh
+bin/up-all.sh
+# open http://localhost:8500
+```
+
+---
+
 ## Contributing
 
 Pull requests welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the

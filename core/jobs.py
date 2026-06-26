@@ -151,6 +151,7 @@ def _account_for_payload(db: Database, payload: dict):
 async def resolve_contacts_job(ctx: dict, payload: dict) -> dict:
     """Resolve pending phones via MTProto. Re-entrant-safe via lock.
     Honors optional `ids` filter in the payload (inline selection)."""
+    _set_correlation(job_kind="resolve", payload=payload)
     db_path = payload.get("db_path") or str(load_settings().db_path)
     job_id = payload["job_id"]
     cleanup_imported = bool(payload.get("cleanup_imported", True))
@@ -211,6 +212,7 @@ async def validate_usernames_job(ctx: dict, payload: dict) -> dict:
     Honors `depends_on` on its job row — used by `enqueue_prepare` to
     chain Validate after Resolve so a single "Подготовить к кампании"
     click handles both passes. Max wait 5 min; then errors out."""
+    _set_correlation(job_kind="validate", payload=payload)
     db_path = payload.get("db_path") or str(load_settings().db_path)
     job_id = payload["job_id"]
     ids = payload.get("ids") or None
@@ -271,6 +273,7 @@ async def validate_usernames_job(ctx: dict, payload: dict) -> dict:
 
 async def run_campaign_job(ctx: dict, payload: dict) -> dict:
     """Run a campaign end-to-end. Locked per-campaign so it can't double-run."""
+    _set_correlation(job_kind="campaign", payload=payload)
     db_path = payload.get("db_path") or str(load_settings().db_path)
     job_id = payload["job_id"]
     campaign_id = int(payload["campaign_id"])
@@ -428,6 +431,7 @@ async def check_read_receipts_job(ctx: dict, payload: dict) -> dict:
     doesn't burn daily send budget. Single-in-flight per worker via
     the `read_check` Redis lock.
     """
+    _set_correlation(job_kind="read_receipts", payload=payload)
     import datetime as _dt
     db_path = payload.get("db_path") or str(load_settings().db_path)
     job_id = payload["job_id"]
@@ -733,6 +737,42 @@ async def watchdog_job(ctx: dict) -> dict:
 # arq worker settings — `python -m arq core.jobs.WorkerSettings` runs this.
 # ---------------------------------------------------------------------------
 
+try:
+    # Install the structured JSON logger at module import — that's
+    # before arq emits its boot lines, so they come through formatted
+    # too. Idempotent.
+    from .log_setup import install as _install_log_at_import
+    _install_log_at_import()
+except Exception:  # noqa: BLE001
+    pass
+
+
+async def _worker_startup(ctx) -> None:
+    """H4 — re-install the structured JSON logger as a safety net in
+    case some import-order quirk re-attached a default handler."""
+    try:
+        from .log_setup import install as _install_log
+        _install_log()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _set_correlation(*, job_kind: str, payload: dict) -> None:
+    """H4 — tag every log line emitted from this job with the job_id
+    + the most useful identifying field (campaign_id / contact ids /
+    etc.). Best-effort; never raises."""
+    try:
+        from .log_setup import correlation_ctx as _cc
+        meta = {"job_kind": job_kind,
+                "job_id": int(payload.get("job_id") or 0)}
+        for k in ("campaign_id", "account_id", "source_id"):
+            if payload.get(k) is not None:
+                meta[k] = payload[k]
+        _cc.set(meta)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class WorkerSettings:
     functions = [resolve_contacts_job, validate_usernames_job,
                  run_campaign_job, check_read_receipts_job]
@@ -749,6 +789,7 @@ class WorkerSettings:
     job_timeout = 86400  # 24h — campaigns can be long
     max_jobs = 4
     keep_result = 3600
+    on_startup = _worker_startup
 
 
 # ---------------------------------------------------------------------------

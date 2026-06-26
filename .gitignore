@@ -30,12 +30,28 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+data/backups/
 !data/.gitkeep
 !data/example_contacts.csv
 
 # Uploads (user media)
 uploads/*
 !uploads/.gitkeep
+
+# Bot-stack (independent deployment) — its own DB and env file.
+# Recursive so nested copies (e.g. data/backups/) can never slip in.
+bot-stack/data/**/*.db
+bot-stack/data/**/*.db-journal
+bot-stack/data/**/*.db-wal
+bot-stack/data/**/*.db-shm
+bot-stack/data/*.db
+bot-stack/data/*.db-journal
+bot-stack/data/*.db-wal
+bot-stack/data/*.db-shm
+bot-stack/data/backups/
+bot-stack/data/broadcast_uploads/*
+!bot-stack/data/.gitkeep
+bot-stack/.env
 
 # Top-level screenshots landing folder (raw drops before renaming into
 # docs/screenshots/). Keeps timestamp-named originals out of git.

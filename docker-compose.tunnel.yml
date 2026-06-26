@@ -1,0 +1,113 @@
+# Cloudflare Tunnel deployment (Option C) — for the AI Qadam blaster on
+# blaster.aiqadam.org, running on a SHARED Coolify box.
+#
+#   docker compose -f docker-compose.tunnel.yml up -d --build
+#
+# This is the ONLY compose file safe to run on aiqadam-web. Do NOT use
+# docker-compose.yml or docker-compose.prod.yml there:
+#   * they publish host ports (127.0.0.1:8501 / 80 / 443) and/or front the app
+#     with Caddy — on the shared box that re-opens co-tenant / origin-IP reach
+#     and bypasses Cloudflare Access. See docs/DEPLOYMENT.md (Option C note).
+#
+# Isolation model (verified by round-5 assessment):
+#   * ALL containers on ONE private "blaster" bridge — no host ports, no
+#     external/coolify network, no Traefik labels.
+#   * cloudflared dials OUTBOUND to Cloudflare and serves blaster.aiqadam.org →
+#     blaster-app:8501. The ONLY ingress is CF edge → Cloudflare Access → tunnel.
+#   * Auth = Cloudflare Access (primary); app.py fail-closed UI password (backstop).
+#
+# Required in .env (mode 0600): TG_API_ID, TG_API_HASH, TG_SESSION_NAME,
+# TG_DB_NAME, pacing vars, TGBLASTER_UI_PASSWORD (>=32 chars), TUNNEL_TOKEN.
+
+name: tg-blaster
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: blaster-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+    networks: [blaster]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # redis:alpine entrypoint drops root -> redis via setpriv (needs SET*UID/GID)
+    # and chowns /data on first run; grant only those, nothing more.
+    cap_add: ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "SETPCAP"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy: {resources: {limits: {memory: 256M}}}
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+
+  app:
+    build: {context: ., dockerfile: Dockerfile}
+    container_name: blaster-app
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_healthy}
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      IN_DOCKER: "1"
+    expose: ["8501"]                # NO host port — reachable only by cloudflared on the private net
+    volumes:
+      - sessions:/app/sessions
+      - data:/app/data
+      - uploads:/app/uploads
+    networks: [blaster]             # PRIVATE net ONLY
+    <<: *hardening
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+
+  worker:
+    build: {context: ., dockerfile: Dockerfile}
+    container_name: blaster-worker
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_healthy}
+    env_file: .env
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      IN_DOCKER: "1"
+    command: ["python", "-m", "arq", "core.jobs.WorkerSettings"]
+    volumes:
+      - sessions:/app/sessions
+      - data:/app/data
+      - uploads:/app/uploads
+    networks: [blaster]
+    <<: *hardening
+    healthcheck: {disable: true}
+    stop_grace_period: 30s
+    deploy: {resources: {limits: {memory: 768M}}}
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+
+  cloudflared:
+    # PIN to a digest before deploy:  cloudflare/cloudflared@sha256:<digest>
+    image: cloudflare/cloudflared:latest
+    container_name: blaster-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]   # token-based, remotely-managed ingress; NO --loglevel debug
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
+    networks: [blaster]
+    depends_on: [app]
+    # NO ports: — cloudflared's metrics listener binds 0.0.0.0 inside the
+    # container by default; the control is the ABSENCE of any host port mapping.
+    <<: *hardening
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+
+networks:
+  blaster:
+    driver: bridge
+
+volumes:
+  redis-data: {}
+  sessions: {}
+  data: {}
+  uploads: {}
