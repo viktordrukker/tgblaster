@@ -1,12 +1,12 @@
 telethon==1.44.0
-streamlit==1.58.0
+streamlit==1.62.0
 pandas==2.2.3
-phonenumbers==9.0.33
-python-dotenv==1.2.2
+phonenumbers==9.0.37
+python-dotenv==1.2.3
 Pillow==11.3.0
 nest_asyncio==1.6.0
 arq==0.28.0
 redis==5.2.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
-fakeredis==2.36.2
+fakeredis==2.37.1
