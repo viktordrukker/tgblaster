@@ -4,6 +4,18 @@ All notable changes to TGBlaster are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] — 2026-11-22
+
+### Fixed
+- Web UI: failed (`error`) and `uncertain` sends can be retried after a campaign
+  has finished — the start gate counted only never-tried contacts, so with
+  0 left the retry options could not be used. The «Повторы» section now lists
+  who failed and why, with a hint for `PeerFlood`.
+
+### Docs
+- CONTRIBUTING, DISCLAIMER and the status table in README.ru updated for 2.1
+  (UI paths for retries, current pacing defaults, `data/blaster.db`).
+
 ## [2.1.0] — 2026-11-22
 
 ### Added
@@ -119,5 +131,8 @@ Rewrite: TGBlaster is now a single-container broadcast CLI.
 
 Initial public release.
 
+[2.1.1]: https://github.com/viktordrukker/tgblaster/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/viktordrukker/tgblaster/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/viktordrukker/tgblaster/compare/v0.1.1...v2.0.0
 [0.1.1]: https://github.com/viktordrukker/tgblaster/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/viktordrukker/tgblaster/releases/tag/v0.1.0

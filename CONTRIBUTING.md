@@ -34,7 +34,7 @@ versions, a minimal reproduction, and relevant logs.
 ```bash
 git clone git@github.com:<you>/tgblaster.git
 cd tgblaster
-git checkout -b fix/database-lock-retry-budget
+git checkout -b fix/short-slug
 ```
 
 Branch naming — no hard rule, but `<type>/<short-slug>` works well:
@@ -52,10 +52,12 @@ Branch naming — no hard rule, but `<type>/<short-slug>` works well:
 ### 3. Test locally
 
 ```bash
-docker compose exec app pytest tests/ -x
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -x
 ```
 
-All 140+ tests must stay green. New behavior gets new tests.
+All 200+ tests must stay green (CI runs the same, plus a Docker build
+and a smoke run of the web UI). New behavior gets new tests.
 
 ### 4. Commit message style
 
