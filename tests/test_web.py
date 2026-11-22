@@ -304,3 +304,29 @@ def _png_bytes() -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (4, 4), "red").save(buf, "PNG")
     return buf.getvalue()
+
+
+def test_retry_errors_after_the_campaign_is_done(home, fake_tg, started):
+    db = seed(home)
+    fake_tg.authorized = True
+    msg = page("message")
+    msg.selectbox[0].set_value("dec").run()
+    button(msg, "Отправить тест себе").click().run()
+    cid = db.get_campaign("dec")["id"]
+    rows = db.contacts("meetup")
+    for r in rows[:2]:
+        db.reserve(cid, r)
+        db.finish(cid, r["id"], "sent")
+    db.reserve(cid, rows[2])
+    db.finish(cid, rows[2]["id"], "error", "PeerFlood")
+    assert db.campaign_stats(cid)["remaining"] == 0
+
+    at = page("send")
+    assert button(at, "▶ Запустить").disabled                # nothing new to send
+    next(x for x in at.checkbox if x.label.startswith("Повторить ошибки")).check().run()
+    ok = next(x for x in at.checkbox if x.label.startswith("Я посмотрел"))
+    assert "**1**" in ok.label and not ok.disabled
+    ok.check().run()
+    button(at, "▶ Запустить").click().run()
+    kind, argv, meta, resume_argv = started[-1]
+    assert "--retry-errors" in argv and "--retry-errors" not in resume_argv
