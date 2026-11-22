@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
+from contextlib import asynccontextmanager
 from typing import Callable
 
 from telethon import TelegramClient, errors
@@ -28,11 +30,97 @@ def make_client(settings: Settings) -> TelegramClient:
                           flood_sleep_threshold=0)
 
 
+@asynccontextmanager
+async def connected(settings: Settings, db: Database):
+    """A connected client that holds the run lock: exactly one process may
+    drive the session — two clients on one auth key can get it revoked.
+    Raises db.LockHeld if a job (resolve/send) is using it."""
+    db.acquire_lock()
+    try:
+        client = make_client(settings)
+        await client.connect()
+        try:
+            yield client
+        finally:
+            if client.is_connected():          # log_out() already disconnected
+                await client.disconnect()
+    finally:
+        db.release_lock()
+
+
+# ---- step-by-step login (web UI) -------------------------------------------
+
+async def send_code(client, phone: str) -> str:
+    """Ask Telegram to send a login code. Returns phone_code_hash."""
+    sent = await client.send_code_request("+" + _digits(phone))
+    return sent.phone_code_hash
+
+
+async def sign_in_code(client, phone: str, code: str, phone_code_hash: str):
+    """The user, or None when the account has a 2FA password."""
+    try:
+        return await client.sign_in(phone="+" + _digits(phone), code=code.strip(),
+                                    phone_code_hash=phone_code_hash)
+    except errors.SessionPasswordNeededError:
+        return None
+
+
+async def sign_in_password(client, password: str):
+    return await client.sign_in(password=password)
+
+
+_EXPLAIN = {
+    errors.PhoneNumberInvalidError: "Неверный номер телефона.",
+    errors.PhoneNumberBannedError: "Этот номер заблокирован в Telegram.",
+    errors.PhoneCodeInvalidError: "Неверный код — проверь и введи ещё раз.",
+    errors.PhoneCodeExpiredError: "Код устарел — запроси новый.",
+    errors.PasswordHashInvalidError: "Неверный пароль 2FA.",
+    errors.ApiIdInvalidError: "TG_API_ID / TG_API_HASH неверные (.env).",
+}
+
+
+def explain(e: Exception) -> str:
+    if isinstance(e, errors.FloodWaitError):
+        return f"Telegram просит подождать {max(1, e.seconds // 60)} мин перед новой попыткой."
+    for cls, text in _EXPLAIN.items():
+        if isinstance(e, cls):
+            return text
+    return f"{type(e).__name__}: {e}"
+
+
+# ---- who is logged in (cached: the UI can't connect while a job runs) -------
+
+def _account_path(settings: Settings):
+    return settings.db_path.parent / "account.json"
+
+
+def save_account(settings: Settings, me) -> None:
+    p = _account_path(settings)
+    if me is None:
+        p.unlink(missing_ok=True)
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"id": me.id, "first_name": me.first_name or "",
+                             "last_name": me.last_name or "", "username": me.username or "",
+                             "phone": me.phone or ""}, ensure_ascii=False), encoding="utf-8")
+
+
+def load_account(settings: Settings) -> dict | None:
+    try:
+        return json.loads(_account_path(settings).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+class NotAuthorized(SystemExit):
+    pass
+
+
 async def ensure_authorized(client: TelegramClient) -> types.User:
     if not client.is_connected():
         await client.connect()
     if not await client.is_user_authorized():
-        raise SystemExit("Сессия не авторизована. Выполни: blaster login")
+        raise NotAuthorized("Сессия не авторизована. Выполни: blaster login")
     return await client.get_me()
 
 

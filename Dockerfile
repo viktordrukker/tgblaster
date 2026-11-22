@@ -1,6 +1,4 @@
-# TGBlaster — single-container Telegram broadcast CLI.
-#   docker compose build
-#   docker compose run --rm blaster --help
+# TGBlaster — Telegram broadcast: web UI (docker compose up -d) + CLI.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -22,6 +20,7 @@ RUN pip install -r requirements.txt
 COPY blaster ./blaster
 RUN mkdir -p sessions data campaigns && chown -R app:app /app
 USER app
+EXPOSE 8501
 
 # tini forwards SIGINT/SIGTERM so `docker stop` lets the current send
 # finish and the journal stay consistent.

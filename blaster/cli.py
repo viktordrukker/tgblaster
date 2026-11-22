@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import csv
 import datetime as dt
 import logging
 import signal
@@ -25,6 +24,7 @@ from . import __version__
 from .config import Settings
 from .db import Database, LockHeld
 from .importer import Overrides, ParseResult, parse_table
+from .report import write_csv as _write_csv
 from .tables import load
 
 # --------------------------------------------------------------------------- #
@@ -44,30 +44,6 @@ def _confirm(question: str, assume_yes: bool) -> bool:
         print(f"{question} — нужен флаг --yes (нет интерактивного терминала)")
         return False
     return input(f"{question} [y/N]: ").strip().lower() in ("y", "yes", "д", "да")
-
-
-def _write_csv(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
-        path.write_text("", encoding="utf-8-sig")
-        return
-    keys: list[str] = []
-    for r in rows:
-        for k in r:
-            if k not in keys:
-                keys.append(k)
-    with path.open("w", newline="", encoding="utf-8-sig") as f:   # BOM → opens fine in Excel
-        w = csv.DictWriter(f, fieldnames=keys)
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: _safe_cell(r.get(k)) for k in keys})
-
-
-def _safe_cell(v):
-    """Neutralise CSV formula injection when the report is opened in Excel."""
-    if isinstance(v, str) and v[:1] in ("=", "-", "@", "\t", "\r") :
-        return "'" + v
-    return "" if v is None else v
 
 
 def _overrides(a) -> Overrides:
@@ -125,22 +101,15 @@ async def _with_client(settings: Settings, db: Database, fn, *, login: bool = Fa
     from . import telegram as tg
 
     try:
-        db.acquire_lock()
+        async with tg.connected(settings, db) as client:
+            if login:
+                me = await tg.interactive_login(client)
+            else:
+                me = await tg.ensure_authorized(client)
+            tg.save_account(settings, me)
+            return await fn(client, me)
     except LockHeld as e:
         raise SystemExit(str(e)) from None
-    client = tg.make_client(settings)
-    try:
-        await client.connect()
-        if login:
-            me = await tg.interactive_login(client)
-        else:
-            me = await tg.ensure_authorized(client)
-        return await fn(client, me)
-    finally:
-        try:
-            await client.disconnect()
-        finally:
-            db.release_lock()
 
 
 def _campaign(db: Database, ref: str) -> dict:
@@ -410,15 +379,10 @@ def cmd_report(a, s: Settings, db: Database) -> int:
 
 
 def cmd_optout(a, s: Settings, db: Database) -> int:
-    from .normalize import extract_username, normalize_phone
+    from .normalize import optout_key
 
     for v in a.values:
-        if v.startswith("id:"):
-            key = v
-        else:
-            p = normalize_phone(v, s.region)
-            u = extract_username(v, bare_ok=True) if not p else None
-            key = p or (f"@{u}" if u else None)
+        key = optout_key(v, s.region)
         if not key:
             print(f"✗ не понял «{v}» (телефон, @username или id:123)")
             continue

@@ -40,3 +40,7 @@ Thumbs.db
 .idea/
 .vscode/*.log
 .claude/settings.local.json
+
+# Quality-gate tool output (crapper/dryer/mutator)
+.metrics/
+target/

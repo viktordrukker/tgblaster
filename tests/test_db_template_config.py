@@ -116,3 +116,11 @@ def test_window(hour, expected_zero):
     assert (w == 0) is expected_zero
     if hour == 23:
         assert w == int(dt.timedelta(hours=9, minutes=30).total_seconds())
+
+
+def test_optouts_listed_newest_first(db):
+    db.add_optout("+998901234567", "попросил")
+    db.add_optout("@User", "")
+    rows = db.optouts()
+    assert [r["value"] for r in rows] == ["@user", "+998901234567"]
+    assert rows[1]["reason"] == "попросил"

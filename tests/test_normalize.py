@@ -102,3 +102,12 @@ def test_first_name_from_full(full, order, expected):
 ])
 def test_is_negative_answer(v, neg):
     assert N.is_negative_answer(v) is neg
+
+
+def test_optout_key_understands_phone_username_and_id():
+    from blaster.normalize import optout_key
+    assert optout_key("90 123 45 67", "UZ") == "+998901234567"
+    assert optout_key("@Some_User", "UZ") == "@Some_User"   # db lowercases on insert
+    assert optout_key("id:123", "UZ") == "id:123"
+    assert optout_key("id:abc", "UZ") is None
+    assert optout_key("???", "UZ") is None
