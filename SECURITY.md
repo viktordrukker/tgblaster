@@ -50,19 +50,15 @@ Out of scope:
 
 - Vulnerabilities in upstream dependencies (report those upstream;
   TGBlaster will pick up the fix when it releases)
-- Denial-of-service that requires pre-auth web-UI access — the UI is
-  not designed for public exposure, see [DEPLOYMENT.md](./docs/DEPLOYMENT.md#hardening-checklist)
 - Social-engineering attacks on the operator
 
 ## Security-relevant configuration reminders
 
-- The Streamlit UI has **no built-in authentication**. Never expose it
-  on the public internet without a reverse proxy enforcing basic-auth
-  or OAuth (see [DEPLOYMENT.md](./docs/DEPLOYMENT.md)).
+- TGBlaster 2.x is a CLI with no network listener; it exposes no ports.
 - The Telethon session file (`sessions/*.session`) is a **full account
   credential**. Anyone with read access to it can impersonate your
   account. Keep it `chmod 600`, never check it into git (the default
   `.gitignore` covers this).
 - The `.env` file holds API hash + id. Same hygiene.
-- Backups (see [DEPLOYMENT.md](./docs/DEPLOYMENT.md#backups)) are as
-  sensitive as the live data — encrypt them at rest.
+- `data/` holds contact lists and reports (personal data). Backups of it
+  are as sensitive as the live data — encrypt them at rest.

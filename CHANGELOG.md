@@ -4,6 +4,36 @@ All notable changes to TGBlaster are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] — 2026-11-22
+
+Rewrite: TGBlaster is now a single-container broadcast CLI.
+
+### Removed
+- Streamlit UI, arq worker and Redis; the registration bot stack, the
+  mtproto-sync bridge and the launcher (archived in branch
+  `archive/bot-stack-2026-11`, not part of the main line).
+
+### Added
+- Table import from xlsx/xls/csv/tsv/json/Google Sheets URL with header-row
+  detection, content-based column roles, RU/UZ/EN header keywords, consent
+  column handling, multiple phones per cell, `t.me` links, given-name
+  extraction from full names, in-file dedup, rejected-rows CSV report.
+- Template fallbacks `{first_name|друзья}`, any table column as a
+  placeholder, refusal to start on unknown placeholders or over-limit text.
+- Send window in the recipients' time zone, rolling-24h cap, `--until-done`,
+  `--limit`, opt-outs, per-contact CSV reports, test send to Saved Messages.
+- Run lock so only one process uses the Telegram session at a time.
+
+### Fixed
+- Resolution no longer renames or deletes contacts that were already in the
+  sender's address book; only temporarily imported contacts are removed.
+- A crash between send and confirm can no longer cause a duplicate message:
+  the contact becomes `uncertain` and needs explicit `--retry-uncertain`.
+- One Telegram user reachable via two phone numbers gets one message.
+- Messages go to `InputPeerUser(id, access_hash)` instead of relying on the
+  session entity cache.
+- Report row numbers match the spreadsheet row numbers.
+
 ## [0.1.1] — 2026-04-23
 
 ### Security

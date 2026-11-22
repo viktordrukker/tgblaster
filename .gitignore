@@ -1,84 +1,42 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.egg-info/
-.eggs/
 build/
 dist/
-
-# Virtualenvs
 .venv/
 venv/
-env/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
-# Env / secrets
+# Secrets
 .env
 .env.*
 !.env.example
 
-# Telegram sessions & local state (WAL mode creates -shm / -wal siblings)
-sessions/*.session
-sessions/*.session-journal
-sessions/*.session-shm
-sessions/*.session-wal
-sessions/.session_cache
+# Telegram sessions
+sessions/*
 !sessions/.gitkeep
 
-# App data
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
-data/backups/
+# State, contact files, reports — personal data, never commit
+data/*
 !data/.gitkeep
-!data/example_contacts.csv
 
-# Uploads (user media)
-uploads/*
-!uploads/.gitkeep
+# Campaign texts/images are event-specific; only examples are tracked
+campaigns/*
+!campaigns/examples/
 
-# Bot-stack (independent deployment) — its own DB and env file.
-# Recursive so nested copies (e.g. data/backups/) can never slip in.
-bot-stack/data/**/*.db
-bot-stack/data/**/*.db-journal
-bot-stack/data/**/*.db-wal
-bot-stack/data/**/*.db-shm
-bot-stack/data/*.db
-bot-stack/data/*.db-journal
-bot-stack/data/*.db-wal
-bot-stack/data/*.db-shm
-bot-stack/data/backups/
-bot-stack/data/broadcast_uploads/*
-!bot-stack/data/.gitkeep
-bot-stack/.env
-
-# Top-level screenshots landing folder (raw drops before renaming into
-# docs/screenshots/). Keeps timestamp-named originals out of git.
+# Legacy local folders (archived in branch archive/bot-stack-2026-11)
+bot-stack/
+uploads/
 screenshots/
-
-# Test & coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-.mypy_cache/
-.ruff_cache/
 
 # OS / IDE
 .DS_Store
 Thumbs.db
-*.swp
-*.swo
 .idea/
 .vscode/*.log
-.vscode/.ropeproject
-
-# Build noise & sandbox artifacts
-.git.attempt2/
-.git.broken/
-.git.broken-*/
-pytest-cache-files-*/
-.git.session.bak
+.claude/settings.local.json

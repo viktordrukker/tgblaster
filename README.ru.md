@@ -1,164 +1,140 @@
 # TGBlaster
 
-**Self-hosted инструмент массовой Telegram-рассылки для opt-in аудитории —
-приглашай зарегистрировавшихся на твой митап, пиши своим подписчикам,
-гони drip-кампании по своей базе клиентов. Работает как три Docker-сервиса
-на ноутбуке или на VPS за €4/мес.**
+**Рассылка в Telegram по таблице участников: аккуратный темп, возобновление после сбоя, без дублей.**
+Один контейнер, CLI, состояние в SQLite. Для сообществ и митапов, где люди сами оставили контакты.
 
-> 🇬🇧 [English README](./README.md)
+> 🇬🇧 [English README](./README.md) · ⚠️ перед первой рассылкой прочитай [DISCLAIMER.md](./DISCLAIMER.md)
 
 ---
 
-## ⚠️ Прочти перед использованием
+## Что умеет
 
-Telegram **запрещает массовые сообщения тем, кто на них не подписывался**.
-Холодная рассылка по купленной или спарсенной базе приведёт к бану
-аккаунта — и TGBlaster от этого не защитит. Используй только для
-аудитории, которая активно ждёт от тебя сообщений.
-
-Перед первой кампанией — прочти **[DISCLAIMER.md](./DISCLAIMER.md)**
-целиком. Там про ToS Telegram, GDPR и границы того, от чего этот софт
-НЕ может защитить.
-
----
-
-## Скриншоты
-
-| | |
-|---|---|
-| ![Login](./docs/screenshots/01-login.jpg) | ![Contacts](./docs/screenshots/02-contacts.jpg) |
-| ![Dry-run](./docs/screenshots/03-dryrun.jpg) | ![Campaign](./docs/screenshots/04-campaign.jpg) |
-| ![Log](./docs/screenshots/05-log.jpg) | ![Jobs](./docs/screenshots/06-jobs.jpg) |
-
----
-
-## Что делает
-
-1. **Загружает контакты** из CSV (гибкие имена колонок; российские и
-   узбекские форматы номеров нормализуются до E.164).
-2. **Ищет номера в Telegram** через `ImportContactsRequest` батчами по
-   100 с автоматической очисткой.
-3. **Валидирует `@usernames`** для контактов, у которых есть хэндл, но
-   нет телефона.
-4. **Персонализирует сообщения** — `{first_name}`, `{name}`,
-   `{group_link}`, плюс любая колонка CSV как `{placeholder}`.
-5. **Отправляет по-человечески**: случайная пауза 30–90 сек, длинная
-   пауза 10–15 мин каждые 40 сообщений, настраиваемый дневной лимит,
-   автоматическая остановка на `PeerFloodError`.
-6. **Resume after crash**: прогресс чекпоинтится в SQLite; убитый
-   воркер подхватит ровно с того места, где упал, через журнал
-   идемпотентности.
-7. **Трёхуровневый дедуп**: дубли телефонов в одном CSV, два телефона
-   одного TG-пользователя, «не пиши этому человеку N дней» между
-   кампаниями.
-8. **Read-receipts**: вручную триггеришь батчевый
-   `GetPeerDialogsRequest` — для прочитанных сообщений флажок `read_at`
-   в журнале.
-9. **CRUD кампаний**: редактировать, клонировать, удалять прошлые
-   кампании — не надо каждый раз собирать шаблон заново.
-10. **Предпросмотр на 5 устройствах**: Compose показывает, как
-    сообщение будет выглядеть в клиентах iPhone, iPad, Android, Desktop
-    и Web (шрифты, радиусы пузырей, цвета ссылок — по клиенту).
-
----
-
-## Архитектура
-
-```
-┌─────────────────────┐      ┌──────────┐      ┌──────────────────┐
-│  Streamlit UI       │◀────▶│  Redis   │◀────▶│  arq воркер      │
-│  (app.py, :8501)    │      │  (queue) │      │  (core/jobs.py)  │
-└──────────┬──────────┘      └──────────┘      └────────┬─────────┘
-           │                                             │
-           └────────────────┬────────────────────────────┘
-                            ▼
-             ┌──────────────────────────────┐
-             │  SQLite (data/state.db)      │
-             │  + Telethon session          │
-             │  + загруженные картинки      │
-             └──────────────────────────────┘
-```
-
-- **UI** — рендерит страницы Streamlit; Dry-run и test-fire бегут
-  in-process.
-- **Воркер** — реальные кампании, resolve, validate, read-check, +
-  watchdog cron.
-- **Redis** — очередь arq, распределённые локи, сигналы pause/stop.
-- **SQLite** — единый источник правды: контакты, кампании, send_log,
-  jobs.
-
-Полный дизайн — в [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
-
----
+- **Принимает почти любую таблицу**: `.xlsx`, `.xls`, `.csv`/`.tsv` (любая кодировка и разделитель), `.json`,
+  ссылку на Google Sheets. Сам находит строку заголовка (даже под шапкой «Регистрация на митап»),
+  колонки телефона, Telegram, ФИО/имени/фамилии/«как к вам обращаться», согласия на рассылку.
+  Колонки определяются и по названию (рус/узб/англ), и по содержимому. Всё можно переопределить флагами.
+- **Понимает грязные данные**: `998901234567.0` из Excel, `90 123 45 67`, `8 (90) 123-45-67`,
+  несколько номеров в ячейке, `@ник`, `t.me/ник`, `t.me/+998…`, «нет», общая колонка «телефон или ник».
+- **Имя для обращения**: `Иванов Иван Иванович` → `Иван`, `Karimov Aziz` → `Aziz`; если имени нет,
+  срабатывает fallback из шаблона: `{first_name|друзья}`.
+- **Резолв в Telegram**: сначала адресная книга, затем пачками по номерам (включая альтернативные номера),
+  потом по `@username`. Временно импортированные контакты удаляются, **существующие контакты организатора
+  не трогаются**.
+- **Безопасная отправка**: случайная пауза 40–100 с, длинная пауза каждые 30, лимит за скользящие 24 ч,
+  окно отправки (по умолчанию 09:00–21:00 Asia/Tashkent), FloodWait/PeerFlood, остановка после 5 ошибок подряд.
+- **Без дублей**: журнал «зарезервировано → отправлено». Если процесс упал посреди отправки,
+  контакт помечается `uncertain` и **не** переотправляется автоматически. Один человек с двумя номерами
+  получит одно сообщение.
+- **Отписки** (`optout`), CSV-отчёты по каждому контакту, тестовая отправка себе в «Избранное».
 
 ## Быстрый старт (Docker)
 
 ```bash
-git clone https://github.com/viktordrukker/tgblaster.git
-cd tgblaster
-cp .env.example .env       # потом отредактируй — см. «API-креды» ниже
-docker compose up -d --build
+cp .env.example .env          # TG_API_ID / TG_API_HASH с https://my.telegram.org
+docker compose build
+alias tgb='docker compose run --rm blaster'
+
+tgb login                                        # один раз: телефон → код → пароль 2FA
+tgb whoami
 ```
 
-Открой <http://localhost:8501> — и пройди 8 шагов (логин → импорт →
-resolve → compose → dry-run → кампания → лог → jobs).
+Положи файл с контактами в `data/inbox/` (папка `data/` не попадает в git).
 
-Стоп: `docker compose down`. Состояние в `data/`, `sessions/`,
-`uploads/` переживёт.
+```bash
+# 1. Посмотреть, как распознан файл (ничего не сохраняет)
+tgb inspect data/inbox/contacts.xlsx
+tgb inspect "https://docs.google.com/spreadsheets/d/…/edit"   # таблица по ссылке
 
-### Получить API-креды Telegram
+# 2. Импорт в список (можно повторять с обновлённым файлом: добавятся только новые)
+tgb import data/inbox/contacts.xlsx --list agile-dec --yes
 
-1. <https://my.telegram.org> → логин тем номером, с которого будешь
-   слать.
-2. API development tools → создай новое приложение (имя любое).
-3. Скопируй `api_id` и `api_hash` в `.env`:
-   ```ini
-   TG_API_ID=123456
-   TG_API_HASH=0123456789abcdef0123456789abcdef
-   TG_SESSION_NAME=tg_session
-   ```
+# 3. Найти людей в Telegram
+tgb resolve --list agile-dec
+tgb contacts --list agile-dec --status not_found --out data/reports/not-found.csv
 
-Все настройки — в [docs/CONFIGURATION.md](./docs/CONFIGURATION.md).
+# 4. Кампания: текст в campaigns/*.md (Telegram markdown) или *.html
+tgb campaign create agile-dec-invite --list agile-dec \
+    --template campaigns/agile-dec.md --image campaigns/banner.png
+tgb preview agile-dec-invite -n 5
+tgb test agile-dec-invite                     # одно сообщение себе в «Избранное»
 
----
+# 5. Рассылка: в фоне, до конца, с паузами на ночь и на дневной лимит
+docker compose run -d --name tgb-send blaster send agile-dec-invite --until-done --yes
+docker logs -f tgb-send
+tgb status agile-dec-invite
+tgb report agile-dec-invite                   # → data/reports/report-agile-dec-invite.csv
+```
 
-## Варианты установки
+Остановить: `docker stop -t 90 tgb-send`. Продолжить: та же команда `send`. Уже отправленные не повторятся.
 
-- **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** — локальный Docker
-  (быстрый старт этого README), Hetzner VPS с Caddy + basic-auth, bare
-  metal systemd, PaaS-варианты.
-- **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)** — запуск тестов,
-  добавить новый тип job, добавить UI-страницу.
-- **[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** — `FloodWait`,
-  `PeerFlood`, «database is locked», конфликт на session-файле, прочие
-  повторяющиеся ошибки.
+## Если колонки распознались не так
 
----
+```bash
+tgb inspect file.xlsx --sheet "Участники" --header-row 3 \
+    --phone-col "Номер" --username-col "Ник" --name-col "ФИО" --name-order surname_first
+```
 
-## Стек
+Колонку можно указать по названию или по номеру (1, 2, 3…). Флаги `--phone-col` и `--username-col` можно
+повторять. `--consent-col` задаёт колонку согласия: строки с ответом «нет» будут исключены.
 
-- **Python 3.11**
-- **Streamlit 1.40** — UI
-- **Telethon 1.43** — MTProto клиент
-- **arq 0.26** — асинхронная очередь на Redis
-- **SQLite** в WAL-режиме — single-node persistence
-- **Docker Compose** — три сервиса
+## Шаблон сообщения
 
----
+```markdown
+Привет, {first_name|друзья}! 👋
 
-## Contributing
+Приглашаем на **Agile Uzbekistan Meetup** — 12 декабря, 19:00.
+Регистрация: [по ссылке](https://example.com)
+```
 
-PR welcome. Воркфлоу, стиль коммитов и как триажатся issue —
-в [CONTRIBUTING.md](./CONTRIBUTING.md).
+- `{first_name}`, `{name}`, `{phone}`, `{username}` и **любая колонка таблицы** по её названию:
+  `{Компания}` или `{компания}`.
+- `{ключ|запасной текст}` подставит запасной текст, если значение пустое. `{{` и `}}` дают литеральные скобки.
+- Неизвестный плейсхолдер — ошибка до старта рассылки, а не «{compnay}» у 300 человек.
+- Разметка Telegram `md`: `**жирный**`, `__курсив__`, `[текст](url)`. Для HTML используй файл `.html`.
+- Лимиты: 4096 символов для текста, 1024 для подписи к картинке. `preview` проверяет их для каждого получателя.
 
-Баги безопасности — приватно через GitHub
-[security advisory](https://github.com/viktordrukker/tgblaster/security/advisories/new) —
-**не** в публичный issue. См. [SECURITY.md](./SECURITY.md).
+## Статусы
 
----
+| контакт      | значение                                         |
+|--------------|--------------------------------------------------|
+| `new`        | ещё не искали в Telegram                         |
+| `resolved`   | найден, можно отправлять                         |
+| `not_found`  | нет в Telegram или скрыт приватностью            |
+| `error`      | ошибка поиска (`resolve --retry-errors`)         |
 
-## Лицензия
+| отправка     | значение                                                                 |
+|--------------|--------------------------------------------------------------------------|
+| `sent`       | доставлено                                                               |
+| `skipped`    | приватность, блокировка, удалённый аккаунт, платные сообщения             |
+| `error`      | Telegram отказал (`send --retry-errors`)                                 |
+| `uncertain`  | связь оборвалась во время отправки; проверь вручную, затем `--retry-uncertain` |
 
-[MIT](./LICENSE). Делай что хочешь, включая коммерческое использование.
-Единственное, чего нельзя — это делать вид, что авторы отвечают за
-твою политику рассылки. См. **[DISCLAIMER.md](./DISCLAIMER.md)**.
+## Настройки (`.env`)
+
+См. [.env.example](./.env.example): `DAILY_CAP`, `MIN_DELAY_SEC`/`MAX_DELAY_SEC`, `LONG_PAUSE_*`,
+`SEND_WINDOW`, `TZ_SEND`, `DEFAULT_REGION`, `MAX_FLOOD_WAIT_SEC`, `PEER_FLOOD_STOP`.
+
+## Без Docker
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m blaster --help
+.venv/bin/python -m pytest
+```
+
+## Устройство
+
+```
+blaster/
+  tables.py     загрузка xlsx/xls/csv/json/URL → листы строк
+  normalize.py  телефоны, @username, имена (чистые функции)
+  importer.py   заголовок, роли колонок, разбор строк, дедупликация
+  template.py   шаблоны, fallback, валидация
+  db.py         SQLite: списки, кампании, журнал отправок, отписки, lock сессии
+  telegram.py   клиент, логин, резолв телефонов/username
+  sender.py     цикл отправки: темп, окна, лимиты, классификация ошибок
+  cli.py        команды
+```
+
+Одновременно с сессией Telegram может работать только один процесс: lock в БД не даст запустить второй
+`send`/`resolve`, потому что два клиента на одном ключе авторизации могут привести к отзыву сессии.

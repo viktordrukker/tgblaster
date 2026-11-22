@@ -1,47 +1,22 @@
-# Build context hygiene — don't bake local state or dev artifacts into the image.
+# Only blaster/ and requirements.txt are copied into the image; keep the
+# build context small and free of secrets anyway.
 .git
 .github
 .venv
 venv
-__pycache__
-*.pyc
+**/__pycache__
+**/*.pyc
 .pytest_cache
-pytest-cache-files-*
-.mypy_cache
-.ruff_cache
 .vscode
 .idea
-.DS_Store
-node_modules
-
-# State/secrets — recursive so nested copies (e.g. data/backups/, bot-stack/data/)
-# can never be baked into the image regardless of build path.
-sessions/*
-!sessions/.gitkeep
-data/*.db
-data/*.db-journal
-data/backups/
-uploads/*
-!uploads/.gitkeep
+.claude
 .env
 **/.env
-**/*.db
-**/*.db-journal
-**/*.db-wal
-**/*.db-shm
-**/*.session
-**/*.session-journal
-**/*.session-shm
-**/*.session-wal
-
-# Other stacks / non-blaster trees — NOT part of the MTProto blaster image.
-# bot-stack ships its OWN registrant DBs/backups + BOT_TOKEN; it must never
-# enter this build context.
-bot-stack/
-bridges/
-launcher/
+sessions/
+data/
+campaigns/
+uploads/
 screenshots/
-docs/screenshots/
-
-# Docs/build outputs we don't need in the image
+bot-stack/
+tests/
 *.log

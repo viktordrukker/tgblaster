@@ -1,193 +1,51 @@
 # TGBlaster
 
-**Self-hosted Telegram messaging tool for consent-based outreach — invite
-your event registrants, contact your opted-in subscribers, or run drip
-campaigns to your own customer list. Runs as three Docker services on
-your laptop or a €4/mo VPS.**
+**Paced, resumable, duplicate-safe Telegram broadcasts from a spreadsheet.**
+One container, a CLI, SQLite state. Built for communities and meetups messaging people who gave
+their contacts and expect to hear from you.
 
-> 🇷🇺 [Русская версия README](./README.ru.md)
+> 🇷🇺 [Русская версия и подробный runbook](./README.ru.md) · ⚠️ read [DISCLAIMER.md](./DISCLAIMER.md) first
 
----
+## Highlights
 
-## ⚠️ Read before using
+- **Reads almost any table**: `.xlsx`, `.xls`, `.csv`/`.tsv` (any encoding and delimiter), `.json`, or a
+  Google Sheets link. It finds the header row (even under a title banner) and the phone, Telegram,
+  full-name, first/last-name, greeting and consent columns, using both header keywords (RU/UZ/EN)
+  and cell content. Every decision is printed and can be overridden.
+- **Messy data handled**: Excel floats, national formats, several numbers per cell, `@handle`,
+  `t.me/handle`, `t.me/+phone`, combined "phone or username" columns. Given names are extracted
+  from full names (`Ivanov Ivan Ivanovich` → `Ivan`).
+- **Resolution**: address book first, then batched phone import (with alternates), then `@username`.
+  Only contacts the tool added get removed again; the sender's own contacts are never touched.
+- **Safe sending**: random delays, periodic long pauses, a rolling-24h cap, a local-time send window,
+  FloodWait/PeerFlood handling, and a stop after repeated failures.
+- **No duplicates**: a reserve→confirm journal. If the process dies mid-send, that contact is marked
+  `uncertain` and is never resent automatically. One person with two numbers gets one message.
+- Opt-outs, per-contact CSV reports, a test send to Saved Messages.
 
-Telegram **prohibits bulk messaging to users who haven't consented**.
-Cold outreach to scraped or purchased contact lists will get your
-account banned — and TGBlaster cannot prevent that. Use this tool only
-for audiences that actively expect to hear from you.
-
-Before your first campaign, read **[DISCLAIMER.md](./DISCLAIMER.md)** in
-full. It covers Telegram's ToS, GDPR implications, and the limits of
-what this software can protect you from.
-
----
-
-## Screenshots
-
-| | |
-|---|---|
-| ![Login](./docs/screenshots/01-login.jpg) | ![Contacts](./docs/screenshots/02-contacts.jpg) |
-| ![Dry-run](./docs/screenshots/03-dryrun.jpg) | ![Campaign](./docs/screenshots/04-campaign.jpg) |
-| ![Log + read receipts](./docs/screenshots/05-log.jpg) | ![Jobs](./docs/screenshots/06-jobs.jpg) |
-
----
-
-## What it does
-
-1. **Imports contacts** from CSV (flexible column names; Russian / Uzbek
-   number formats normalized to E.164).
-2. **Resolves phones to Telegram users** via `ImportContactsRequest`
-   batched at 100/call, with automatic cleanup.
-3. **Validates `@usernames`** for contacts who gave a handle but no
-   phone.
-4. **Personalizes messages** — `{first_name}`, `{name}`, `{group_link}`,
-   plus any CSV column as `{placeholder}`.
-5. **Sends at human-looking pace**: 30–90 s random gap, 10–15 min pause
-   every 40 messages, configurable daily cap, automatic stop on
-   `PeerFloodError`.
-6. **Resume on crash**: progress is checkpointed to SQLite; a killed
-   worker picks up exactly where it stopped via an idempotency journal.
-7. **Triple-layer dedup**: duplicate phones in the same CSV, two phones
-   that map to one Telegram user, and cross-campaign "don't re-DM this
-   person for N days".
-8. **Read receipts**: manually trigger a batch `GetPeerDialogsRequest`
-   to flip per-message `read_at` for messages Telegram reports as read.
-9. **Campaign CRUD**: edit, clone, delete past campaigns — no need to
-   rebuild a template from scratch.
-10. **5-device preview**: the compose screen shows how the message will
-    look on iPhone, iPad, Android, Desktop, and Web Telegram clients
-    (device-specific fonts, bubble radius, link colors).
-
----
-
-## Architecture
-
-```
-┌─────────────────────┐      ┌──────────┐      ┌──────────────────┐
-│  Streamlit UI       │◀────▶│  Redis   │◀────▶│  arq worker      │
-│  (app.py, :8501)    │      │  (queue) │      │  (core/jobs.py)  │
-└──────────┬──────────┘      └──────────┘      └────────┬─────────┘
-           │                                             │
-           └────────────────┬────────────────────────────┘
-                            ▼
-             ┌──────────────────────────────┐
-             │  SQLite (data/state.db)      │
-             │  + Telethon session          │
-             │  + uploaded images           │
-             └──────────────────────────────┘
-```
-
-- **UI** renders pages in Streamlit; runs Dry-run and test-fires in
-  process.
-- **Worker** runs real campaigns, resolve jobs, validate jobs,
-  read-check jobs, and a watchdog cron.
-- **Redis** holds the arq queue, distributed locks, and pause/stop
-  signals.
-- **SQLite** is the single source of truth for contacts, campaigns,
-  send log, and jobs state.
-
-See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the full design.
-
----
-
-## Quick start (Docker)
+## Quick start
 
 ```bash
-git clone https://github.com/viktordrukker/tgblaster.git
-cd tgblaster
-cp .env.example .env       # then edit — see "Getting API credentials" below
-docker compose up -d --build
+cp .env.example .env                     # TG_API_ID / TG_API_HASH from my.telegram.org
+docker compose build
+alias tgb='docker compose run --rm blaster'
+tgb login
+tgb inspect data/inbox/contacts.xlsx
+tgb import  data/inbox/contacts.xlsx --list dec --yes
+tgb resolve --list dec
+tgb campaign create invite --list dec --template campaigns/invite.md
+tgb preview invite && tgb test invite
+docker compose run -d --name tgb-send blaster send invite --until-done --yes
+docker logs -f tgb-send
 ```
 
-Open <http://localhost:8501> and follow the 8-step flow (login →
-import → resolve → compose → dry-run → campaign → log → jobs).
+The full guide is in [README.ru.md](./README.ru.md).
 
-Stop: `docker compose down`. State in `data/`, `sessions/`, `uploads/`
-survives.
+## Development
 
-### Getting Telegram API credentials
-
-1. Open <https://my.telegram.org> → log in with the phone number you
-   want to send from.
-2. API development tools → create a new app (any name).
-3. Copy `api_id` and `api_hash` into `.env`:
-   ```ini
-   TG_API_ID=123456
-   TG_API_HASH=0123456789abcdef0123456789abcdef
-   TG_SESSION_NAME=tg_session
-   ```
-
-See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for every setting.
-
----
-
-## Install paths
-
-- **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** — Docker local (this
-  README's quick start), Hetzner VPS with Caddy + basic auth, bare-metal
-  systemd units, cloud PaaS options.
-- **[docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)** — running tests,
-  adding a new job type, adding a UI page.
-- **[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** — `FloodWait`,
-  `PeerFlood`, "database is locked", session-file contention, and
-  other recurring errors.
-
----
-
-## Tech stack
-
-- **Python 3.11**
-- **Streamlit 1.40** — UI
-- **Telethon 1.43** — MTProto client
-- **arq 0.26** — async worker queue on Redis
-- **SQLite** with WAL journal — single-node persistence
-- **Docker Compose** — three-service stack
-
----
-
-## Bot stack (optional, fully independent)
-
-A separate Telegram registration-bot deployment lives at
-[`bot-stack/`](./bot-stack/). Replaces a Google Form for meetup
-signups; broadcasts via the Bot API (no `PeerFloodError`, opt-in
-audience). Has its own Dockerfile, `docker-compose.yml`, SQLite, Redis,
-and Streamlit admin (port **8502**).
-
-**It does not share code with the MTProto stack.** You can deploy it
-alone on a host that doesn't even have this repo's parent stack
-installed. See [`bot-stack/README.md`](./bot-stack/README.md) for the
-walkthrough.
-
-An optional one-way bridge at
-[`bridges/mtproto-sync/`](./bridges/mtproto-sync/) syncs bot
-registrants into this stack's `contacts` table for MTProto broadcasts,
-if you want both paths.
-
-A unified [launcher](./launcher/) on port `8500` lets you pick between
-the two stacks from one landing page. Convenience wrapper to bring
-everything up:
-
-```sh
-bin/up-all.sh
-# open http://localhost:8500
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
 ```
 
----
-
-## Contributing
-
-Pull requests welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the
-workflow, commit style, and how issues are triaged.
-
-Report security issues privately via GitHub's
-[security advisory](https://github.com/viktordrukker/tgblaster/security/advisories/new) —
-**not** as a public issue. See [SECURITY.md](./SECURITY.md).
-
----
-
-## License
-
-[MIT](./LICENSE) — do what you want with the code, including
-commercial use. The only thing you can't do is pretend the authors
-authored *your* messaging policy for you. See
-**[DISCLAIMER.md](./DISCLAIMER.md)**.
+MIT licensed.

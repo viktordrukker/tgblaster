@@ -1,78 +1,24 @@
-# Three-service stack: Streamlit UI + arq worker + Redis.
+# One service, no ports, no database server: state lives in ./data
+# (SQLite) and ./sessions (Telethon session) on the host.
 #
-#   docker compose up           — start everything in the foreground
-#   docker compose up -d        — start detached
-#   docker compose down         — stop & remove containers
-#   docker compose logs -f app  — tail a service's logs
-#
-# State lives on named volumes so tearing containers down doesn't wipe
-# your Telethon session or the SQLite DB.
-
+#   docker compose build
+#   docker compose run --rm blaster inspect data/inbox/contacts.xlsx
+#   docker compose run --rm blaster login                    # interactive, once
+#   docker compose run -d --name tgb-send blaster send NAME --until-done --yes
+#   docker logs -f tgb-send        # watch
+#   docker stop -t 90 tgb-send     # graceful stop; re-run the same command to resume
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: blaster-redis
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  app:
+  blaster:
     build: .
-    container_name: blaster-app
-    restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-    ports:
-      # Loopback only. Anyone with network access to the host would
-      # otherwise control the logged-in Telegram session (the UI has no
-      # built-in auth). For remote access, use the prod compose which
-      # fronts the app with Caddy basic-auth, or set TGBLASTER_UI_PASSWORD.
-      - "127.0.0.1:8501:8501"
+    image: tgblaster:2
     env_file: .env
     environment:
-      REDIS_URL: redis://redis:6379/0
-      IN_DOCKER: "1"
+      BLASTER_HOME: /app
     volumes:
       - ./sessions:/app/sessions
       - ./data:/app/data
-      - ./uploads:/app/uploads
-      # Bind-mount .env so "Save credentials" in the UI persists to the
-      # host file. compose also reads this same file via env_file above.
-      - ./.env:/app/.env
-    # Default CMD from Dockerfile starts Streamlit.
-
-  worker:
-    build: .
-    container_name: blaster-worker
-    restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      IN_DOCKER: "1"
-    volumes:
-      - ./sessions:/app/sessions
-      - ./data:/app/data
-      - ./uploads:/app/uploads
-      - ./.env:/app/.env
-    command: ["python", "-m", "arq", "core.jobs.WorkerSettings"]
-    # The image-level HEALTHCHECK targets Streamlit on :8501; the worker
-    # doesn't serve HTTP, so disable it here to avoid a false "unhealthy".
-    healthcheck:
-      disable: true
-    # Phase H0 — let in-flight sends finish cleanly on `docker compose
-    # down` / `restart`. arq gets ~30 s to flush the current contact,
-    # land the `confirm_send`, and exit before SIGKILL.
-    stop_grace_period: 30s
-
-volumes:
-  redis-data:
+      - ./campaigns:/app/campaigns
+    stdin_open: true
+    tty: true
+    stop_signal: SIGINT
+    stop_grace_period: 90s
