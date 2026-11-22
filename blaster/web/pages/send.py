@@ -58,7 +58,8 @@ live()
 # ---- controls -------------------------------------------------------------------
 problems = check_campaign(c.db, camp)
 tested = is_tested(c, camp)
-remaining = c.db.campaign_stats(camp["id"])["remaining"]
+stats = c.db.campaign_stats(camp["id"])
+remaining = stats["remaining"]          # never tried yet; error/uncertain come back only via retry flags
 argv = blaster_argv("send", name, "--until-done", "--yes")
 
 if stt.busy and mine:
@@ -76,16 +77,25 @@ else:
         st.error(x)
     if not tested:
         st.warning("Сначала отправь себе тест этой версии сообщения (страница «Сообщение»).")
-    blocked = bool(problems) or not tested or remaining == 0
-    if mine and stt.state in ("paused", "interrupted"):
+    blocked = bool(problems) or not tested
+    if mine and stt.state in ("paused", "interrupted") and remaining:
         if st.button("▶ Продолжить", type="primary", disabled=blocked):
             c.jobs.resume()
             st.rerun()
     else:
-        with st.expander("Повторы"):
-            r_unc = st.checkbox("Переотправить «неясно» (может дать дубль, если сообщение всё же дошло)")
-            r_err = st.checkbox("Повторить ошибки")
-        ok = st.checkbox(f"Я посмотрел превью и тест. Отправить **{remaining}** людям по-настоящему.",
+        failed = [r for r in c.db.report(camp["id"]) if r["send_status"] in ("error", "uncertain")]
+        with st.expander(f"Повторы ({len(failed)})", expanded=bool(failed)):
+            for r in failed:
+                st.caption(f"{r['name'] or r['phone'] or r['username']}: {r['send_status']} — {r['detail']}")
+            if any("PeerFlood" in (r["detail"] or "") for r in failed):
+                st.caption("PeerFlood — Telegram ограничил сообщения незнакомым. Если повтор снова упадёт, "
+                           "подожди сутки и проверь аккаунт в @SpamBot.")
+            r_unc = st.checkbox(f"Переотправить «неясно» ({stats['uncertain']}) — может дать дубль, "
+                                f"если сообщение всё же дошло", disabled=not stats["uncertain"])
+            r_err = st.checkbox(f"Повторить ошибки ({stats['error']})", disabled=not stats["error"])
+        to_send = remaining + (stats["error"] if r_err else 0) + (stats["uncertain"] if r_unc else 0)
+        blocked = blocked or to_send == 0
+        ok = st.checkbox(f"Я посмотрел превью и тест. Отправить **{to_send}** людям по-настоящему.",
                          disabled=blocked, key=f"ok:{camp['id']}")
         if st.button("▶ Запустить рассылку", type="primary", disabled=blocked or not ok):
             extra = (["--retry-uncertain"] if r_unc else []) + (["--retry-errors"] if r_err else [])
