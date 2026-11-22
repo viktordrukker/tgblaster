@@ -49,16 +49,22 @@ def _digits(p: str | None) -> str:
     return re.sub(r"\D", "", p or "")
 
 
-async def _sleep(stop: asyncio.Event | None, seconds: float) -> bool:
-    """Interruptible sleep. True if interrupted."""
-    if stop is None:
-        await asyncio.sleep(seconds)
-        return False
-    try:
-        await asyncio.wait_for(stop.wait(), timeout=seconds)
-        return True
-    except asyncio.TimeoutError:
-        return False
+async def _sleep(stop: asyncio.Event | None, seconds: float,
+                 heartbeat: Callable[[], None] | None = None) -> bool:
+    """Interruptible sleep that keeps the run lock alive. True if interrupted."""
+    stop = stop or asyncio.Event()
+    loop = asyncio.get_running_loop()
+    end = loop.time() + seconds
+    while True:
+        left = end - loop.time()
+        if left <= 0:
+            return stop.is_set()
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=min(left, 30))
+            return True
+        except asyncio.TimeoutError:
+            if heartbeat:
+                heartbeat()
 
 
 def _is_person(u) -> bool:
@@ -139,7 +145,7 @@ async def resolve_list(
                     stats["stopped"] = f"flood_wait_{e.seconds}s"
                     break
                 out(f"⏱ FloodWait {e.seconds}s — жду…")
-                if await _sleep(stop, e.seconds + 5):
+                if await _sleep(stop, e.seconds + 5, db.heartbeat):
                     stats["stopped"] = "stopped"
                     break
                 continue  # retry same batch
@@ -171,9 +177,10 @@ async def resolve_list(
                         db.mark_resolve_error(cid, "import rate-limited (retry_contacts)")
                         unresolved.pop(cid)
                         stats["errors"] += 1
+            db.heartbeat()
             out(f"  батч номеров {i // IMPORT_BATCH + 1}: найдено всего {stats['resolved']}")
             i += IMPORT_BATCH
-            if i < len(queue) and await _sleep(stop, random.uniform(*import_pause)):
+            if i < len(queue) and await _sleep(stop, random.uniform(*import_pause), db.heartbeat):
                 stats["stopped"] = "stopped"
                 break
         if stats["stopped"]:
@@ -209,7 +216,7 @@ async def resolve_list(
                 db.mark_resolve_error(r["id"], f"ResolveUsername: {e}")
                 unresolved.pop(r["id"])
                 stats["errors"] += 1
-            if await _sleep(stop, random.uniform(*user_pause)):
+            if await _sleep(stop, random.uniform(*user_pause), db.heartbeat):
                 stats["stopped"] = "stopped"
                 break
 
