@@ -6,7 +6,7 @@ import streamlit as st
 from blaster import telegram as tg
 from blaster.sender import check_campaign, rendered_too_long
 from blaster.template import render
-from blaster.web.common import ctx, home, is_tested, mark_tested, run_tg
+from blaster.web.common import ctx, home, is_tested, mark_tested, run_tg, save_image
 
 c = ctx()
 ss = st.session_state
@@ -56,11 +56,12 @@ with left:
     if st.button("Сохранить", type="primary", disabled=not name):
         image = None if drop_img else img_now
         if upload is not None:
-            folder = c.campaigns_dir / re.sub(r"[^\w\-]+", "_", name)
-            folder.mkdir(parents=True, exist_ok=True)
-            dest = folder / re.sub(r"[^\w.\-]+", "_", upload.name)
-            dest.write_bytes(upload.getvalue())
-            image = str(dest.resolve())
+            try:
+                image = save_image(c.campaigns_dir / re.sub(r"[^\w\-]+", "_", name), upload.name,
+                                   upload.getvalue())
+            except ValueError as e:
+                st.error(str(e))
+                st.stop()
         if camp is None:
             if c.db.get_campaign(name):
                 st.error(f"Кампания «{name}» уже есть — выбери её в списке.")

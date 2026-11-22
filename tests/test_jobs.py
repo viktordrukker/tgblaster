@@ -30,7 +30,7 @@ def wait_for(cond, timeout=15.0):
 
 @pytest.fixture
 def jobs(tmp_path):
-    return Jobs(tmp_path / "jobs")
+    return Jobs(tmp_path / "data" / "jobs")           # data/ may not exist yet
 
 
 def test_finished_job_reports_exit_and_log(jobs):
@@ -102,3 +102,25 @@ def test_resume_uses_resume_argv_so_one_shot_flags_are_not_repeated(jobs):
     assert wait_for(lambda: jobs.status().state == "paused")
     jobs.resume()
     assert wait_for(lambda: "resumed-run" in jobs.log_tail())
+
+
+def test_end_is_seen_on_the_first_look(jobs):
+    job = jobs.start("demo", [PY, "-c", "pass"])
+    stat = lambda: open(f"/proc/{job.pid}/stat").read().split(")")[-1].split()[0]  # noqa: E731
+    assert wait_for(lambda: stat() == "Z")             # exited, not reaped yet
+    assert jobs.status().state == "finished"
+
+
+def test_reused_pid_after_restart_is_not_our_job(jobs):
+    import json
+    (jobs.dir / "job.json").write_text(json.dumps({
+        "id": "x", "kind": "send", "argv": [PY, "-c", "pass"], "log": str(jobs.dir / "x.log"),
+        "pid": os.getpid(), "want": "running"}))       # some unrelated live process
+    assert jobs.status().state == "interrupted"
+
+
+def test_job_being_spawned_counts_as_running(jobs):
+    import json
+    (jobs.dir / "job.json").write_text(json.dumps({
+        "id": "x", "kind": "send", "argv": [], "log": str(jobs.dir / "x.log"), "pid": 0}))
+    assert jobs.status().busy

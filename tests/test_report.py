@@ -13,3 +13,11 @@ def test_csv_neutralises_formulas_and_unions_columns():
 
 def test_empty_report_is_empty():
     assert csv_text([]) == ""
+
+
+def test_write_csv_creates_folders_and_excel_bom(tmp_path):
+    from blaster.report import write_csv
+    out = tmp_path / "a" / "b" / "r.csv"
+    write_csv(out, [{"x": 1}])
+    write_csv(out, [{"x": 2}])                       # existing folder is fine
+    assert out.read_bytes().startswith(b"\xef\xbb\xbfx")

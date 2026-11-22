@@ -83,6 +83,11 @@ def started(monkeypatch):
     return calls
 
 
+def png(path, color, size=(10, 10)):
+    from PIL import Image
+    Image.new("RGB", size, color).save(path)
+
+
 def db_of(home) -> Database:
     return Database(home / "data" / "blaster.db")
 
@@ -166,6 +171,9 @@ def test_message_create_then_test_to_saved_messages(home, fake_tg):
     assert not at.exception
     peer, text, _ = fake_tg.sent[-1]
     assert peer == "me" and text.startswith("Привет, ")
+    at.run()
+    button(at, "Отправить тест себе в Избранное ещё раз").click().run()
+    assert not at.exception and len(fake_tg.sent) == 2
 
 
 def test_send_is_locked_until_tested_and_confirmed(home, fake_tg, started):
@@ -240,3 +248,59 @@ def test_app_password_gate(home, fake_tg):
     assert at.error
     at.text_input[0].input("s3cret").run()
     assert any("Telegram" in t.value for t in at.title)
+
+
+def test_resolve_page_shows_progress_and_starts_lookup(home, fake_tg, started):
+    seed(home, resolve=False, campaign=False)
+    at = page("resolve")
+    assert any("Проверено 0 из 3" in (p.proto.text or "") for p in at.get("progress"))
+    button(at, "Найти в Telegram").click().run()
+    kind, argv, meta, _ = started[-1]
+    assert kind == "resolve" and meta == {"list": "meetup"} and argv[-3:] == ["resolve", "--list", "meetup"]
+
+
+def test_sidebar_shows_how_the_last_job_ended(home, fake_tg):
+    import sys
+    import time
+    jobs = Jobs(home / "data" / "jobs")
+    jobs.start("send", [sys.executable, "-c", "raise SystemExit(2)"], meta={"campaign": "dec"})
+    for _ in range(100):
+        if not jobs.status().busy:
+            break
+        time.sleep(0.1)
+    at = AppTest.from_file(str(APP), default_timeout=30)
+    at.run()
+    captions = [x.value for x in at.sidebar.caption]
+    assert "Рассылка «dec»: завершена, код 2" in captions
+    assert "Telegram: не выполнен" in captions
+
+
+def test_new_banner_in_the_same_file_locks_sending_again(home, fake_tg):
+    db = seed(home)
+    banner = home / "campaigns" / "banner.png"
+    png(banner, "red")
+    db.update_campaign(db.get_campaign("dec")["id"], image_path=str(banner))
+    fake_tg.authorized = True
+    msg = page("message")
+    msg.selectbox[0].set_value("dec").run()
+    button(msg, "Отправить тест себе").click().run()
+    assert not any("тест этой версии" in w.value for w in page("send").warning)
+    png(banner, "blue", size=(20, 20))
+    assert any("тест этой версии" in w.value for w in page("send").warning)
+
+
+def test_upload_that_is_not_an_image_is_refused(home, fake_tg):
+    from blaster.web.common import save_image
+    with pytest.raises(ValueError, match="не картинка"):
+        save_image(home / "campaigns" / "dec", "banner.png", b"not an image")
+    assert not (home / "campaigns" / "dec" / "banner.png").exists()
+    p = save_image(home / "campaigns" / "dec", "my banner.png", _png_bytes())
+    assert Path(p).name == "my_banner.png" and Path(p).is_file()
+
+
+def _png_bytes() -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), "red").save(buf, "PNG")
+    return buf.getvalue()

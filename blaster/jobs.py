@@ -59,7 +59,7 @@ class Status:
 
 def _write_json(path: Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -85,11 +85,9 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True
     try:                                       # pid reuse after a restart
-        cmd = Path(f"/proc/{pid}/cmdline").read_bytes()
-        stat = Path(f"/proc/{pid}/stat").read_text()
+        return b"blaster.jobs" in Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
         return True
-    return b"blaster.jobs" in cmd and stat.split(")")[-1].split()[0] != "Z"
 
 
 class Jobs:
@@ -124,10 +122,7 @@ class Jobs:
         job = self.current()
         if job is None or not Path(job.log).is_file():
             return ""
-        with open(job.log, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - 64 * 1024))
-            text = f.read().decode("utf-8", "replace")
+        text = Path(job.log).read_text(encoding="utf-8", errors="replace")   # ~1 line per message
         return "\n".join(text.splitlines()[-lines:])
 
     # -- control -----------------------------------------------------------

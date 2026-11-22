@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,6 +90,19 @@ def account_line(acc: dict | None) -> str:
     name = f"{acc.get('first_name', '')} {acc.get('last_name', '')}".strip()
     user = f"@{acc['username']}" if acc.get("username") else "без @username"
     return f"{name} ({user}, +{acc.get('phone', '')})"
+
+
+def save_image(folder: Path, filename: str, data: bytes) -> str:
+    """Store an uploaded banner; refuse anything Pillow can't read."""
+    from PIL import Image, UnidentifiedImageError
+    try:
+        Image.open(io.BytesIO(data)).verify()
+    except (UnidentifiedImageError, OSError, SyntaxError) as e:
+        raise ValueError(f"«{filename}» — не картинка или файл повреждён") from e
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / re.sub(r"[^\w.\-]+", "_", filename)
+    dest.write_bytes(data)
+    return str(dest.resolve())
 
 
 # ---- "tested" gate: real sending only after a test of the exact content -----

@@ -62,6 +62,7 @@ def test_errors_are_explained_in_russian():
         asyncio.run(tg.sign_in_code(LoginClient(bad_code=True), "+1", "1", "HASH"))
     assert "Неверный код" in tg.explain(e.value)
     assert "2 мин" in tg.explain(errors.FloodWaitError(None, capture=120))
+    assert "1 мин" in tg.explain(errors.FloodWaitError(None, capture=30))     # never "0 мин"
 
 
 def test_connected_holds_and_releases_lock(tmp_path, monkeypatch):
