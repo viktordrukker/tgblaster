@@ -268,6 +268,10 @@ class Database:
         self.conn.execute("INSERT OR REPLACE INTO optouts(value, reason, created_at) VALUES (?,?,?)",
                           (value.strip().lower(), reason, _now()))
 
+    def optouts(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT value, reason, created_at FROM optouts ORDER BY created_at DESC")]
+
     def optout_values(self) -> set[str]:
         return {r[0] for r in self.conn.execute("SELECT value FROM optouts")}
 

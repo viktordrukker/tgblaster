@@ -19,6 +19,9 @@ class LoginClient:
     async def connect(self):
         self.calls.append("connect")
 
+    def is_connected(self):
+        return self.calls[-1:] != ["disconnect"]
+
     async def disconnect(self):
         self.calls.append("disconnect")
 

@@ -4,6 +4,29 @@ All notable changes to TGBlaster are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] — 2026-11-22
+
+### Added
+- Web UI (Streamlit, `docker compose up -d` → http://127.0.0.1:8501): Telegram login
+  in steps (phone → code → 2FA) and logout; contacts import from file or link with
+  editable column roles and a per-contact preview before import; Telegram lookup and
+  sending with live progress and log; message editor with banner upload, preview on
+  real contacts and a test to Saved Messages; start/pause/stop; CSV report download;
+  opt-outs; pacing settings written to `.env`; optional `UI_PASSWORD`.
+- Sending unlocks only after a test of the exact current message (text, image,
+  markup, list) plus an explicit confirmation.
+- Background jobs (`blaster/jobs.py`): resolve/send run as a supervised process with a
+  log file, survive a closed tab, stop cleanly on `docker stop` and resume on the next
+  start; paused/stopped/finished jobs are not resumed. One-shot flags
+  (`--retry-uncertain`) are not repeated on resume.
+
+### Changed
+- `docker compose up -d` starts the UI; the CLI service moved to the `cli` profile
+  (`docker compose run --rm blaster …`).
+
+### Fixed
+- CI: `pytest` failed with `No module named blaster` (repo root not on `sys.path`).
+
 ## [2.0.0] — 2026-11-22
 
 Rewrite: TGBlaster is now a single-container broadcast CLI.

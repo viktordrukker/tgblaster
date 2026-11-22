@@ -1,7 +1,8 @@
 # TGBlaster
 
 **Рассылка в Telegram по таблице участников: аккуратный темп, возобновление после сбоя, без дублей.**
-Один контейнер, CLI, состояние в SQLite. Для сообществ и митапов, где люди сами оставили контакты.
+Один контейнер, веб-интерфейс (и CLI для скриптов), состояние в SQLite. Для сообществ и митапов,
+где люди сами оставили контакты.
 
 > 🇬🇧 [English README](./README.md) · ⚠️ перед первой рассылкой прочитай [DISCLAIMER.md](./DISCLAIMER.md)
 
@@ -27,47 +28,53 @@
   получит одно сообщение.
 - **Отписки** (`optout`), CSV-отчёты по каждому контакту, тестовая отправка себе в «Избранное».
 
-## Быстрый старт (Docker)
+## Быстрый старт
 
 ```bash
 cp .env.example .env          # TG_API_ID / TG_API_HASH с https://my.telegram.org
-docker compose build
-alias tgb='docker compose run --rm blaster'
-
-tgb login                                        # один раз: телефон → код → пароль 2FA
-tgb whoami
+docker compose up -d          # → http://127.0.0.1:8501
 ```
 
-Положи файл с контактами в `data/inbox/` (папка `data/` не попадает в git).
+Дальше всё в браузере, страницы сверху вниз:
+
+| страница | что делает |
+|---|---|
+| 🔌 Подключение Telegram | вход: телефон → код → пароль 2FA; кто сейчас вошёл; смена аккаунта |
+| 📇 Контакты | файл или ссылка → первые строки, распознанные колонки (меняются выпадающими списками), как прочитается каждый контакт → импорт по кнопке |
+| 🔎 Поиск в Telegram | находит людей списка, прогресс и лог вживую |
+| ✉️ Сообщение | редактор, баннер, превью на реальных контактах, **тест себе в «Избранное»** |
+| 🚀 Рассылка | старт / пауза / стоп, прогресс, лог, CSV-отчёт, отписки |
+| ⚙️ Настройки | темп, лимит за 24 ч, окно отправки, пароль на вход — пишется в `.env` |
+
+- Кнопка «Запустить рассылку» не активна, пока не отправлен тест **этой** версии сообщения
+  (любая правка текста или картинки требует нового теста) и не отмечено подтверждение.
+- Поиск и рассылка идут отдельным процессом: вкладку можно закрыть. При `docker compose restart`
+  рассылка доотправляет текущее сообщение, а после старта продолжает сама. Пауза и стоп — не продолжаются.
+- Логи фоновых операций — `data/jobs/*.log`, отчёты — `data/reports/`.
+- Пароль на вход: «Настройки» → «Пароль на вход в интерфейс» (`UI_PASSWORD` в `.env`).
+  Порт открыт только на `127.0.0.1`.
+
+## Командная строка (для скриптов)
 
 ```bash
-# 1. Посмотреть, как распознан файл (ничего не сохраняет)
-tgb inspect data/inbox/contacts.xlsx
-tgb inspect "https://docs.google.com/spreadsheets/d/…/edit"   # таблица по ссылке
+alias tgb='docker compose run --rm blaster'      # тот же образ, профиль cli
 
-# 2. Импорт в список (можно повторять с обновлённым файлом: добавятся только новые)
+tgb inspect data/inbox/contacts.xlsx             # как распознан файл (ничего не сохраняет)
 tgb import data/inbox/contacts.xlsx --list agile-dec --yes
-
-# 3. Найти людей в Telegram
 tgb resolve --list agile-dec
-tgb contacts --list agile-dec --status not_found --out data/reports/not-found.csv
-
-# 4. Кампания: текст в campaigns/*.md (Telegram markdown) или *.html
-tgb campaign create agile-dec-invite --list agile-dec \
-    --template campaigns/agile-dec.md --image campaigns/banner.png
+tgb campaign create agile-dec-invite --list agile-dec --template campaigns/agile-dec.md --image campaigns/banner.png
 tgb preview agile-dec-invite -n 5
-tgb test agile-dec-invite                     # одно сообщение себе в «Избранное»
-
-# 5. Рассылка: в фоне, до конца, с паузами на ночь и на дневной лимит
-docker compose run -d --name tgb-send blaster send agile-dec-invite --until-done --yes
-docker logs -f tgb-send
+tgb test agile-dec-invite                        # одно сообщение себе в «Избранное»
+tgb send agile-dec-invite --until-done --yes
 tgb status agile-dec-invite
-tgb report agile-dec-invite                   # → data/reports/report-agile-dec-invite.csv
+tgb report agile-dec-invite                      # → data/reports/report-agile-dec-invite.csv
 ```
 
-Остановить: `docker stop -t 90 tgb-send`. Продолжить: та же команда `send`. Уже отправленные не повторятся.
+Уже отправленные не повторятся при повторном `send`.
 
-## Если колонки распознались не так
+## Если колонки распознались не так (CLI)
+
+В интерфейсе роли колонок и строка заголовка меняются выпадающими списками. В командной строке:
 
 ```bash
 tgb inspect file.xlsx --sheet "Участники" --header-row 3 \
@@ -118,7 +125,8 @@ tgb inspect file.xlsx --sheet "Участники" --header-row 3 \
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m blaster --help
+.venv/bin/python -m blaster.web          # интерфейс на http://127.0.0.1:8501
+.venv/bin/python -m blaster --help       # CLI
 .venv/bin/python -m pytest
 ```
 
@@ -134,7 +142,13 @@ blaster/
   telegram.py   клиент, логин, резолв телефонов/username
   sender.py     цикл отправки: темп, окна, лимиты, классификация ошибок
   cli.py        команды
+  jobs.py       фоновая операция: супервизор, лог, пауза/стоп, продолжение после перезапуска
+  envfile.py    запись настроек в .env
+  report.py     CSV для Excel
+  web/          Streamlit: app.py + pages/*.py; __main__ запускает и корректно гасит
 ```
 
 Одновременно с сессией Telegram может работать только один процесс: lock в БД не даст запустить второй
 `send`/`resolve`, потому что два клиента на одном ключе авторизации могут привести к отзыву сессии.
+Интерфейс подключается к Telegram только короткими операциями (вход, тест) и, пока идёт фоновая
+операция, показывает последний известный вход.

@@ -39,6 +39,7 @@ class Job:
     want: str = "running"            # running | paused | stopped
     started_at: float = 0.0
     meta: dict = field(default_factory=dict)
+    resume_argv: list[str] | None = None     # one-shot flags (e.g. --retry-uncertain) dropped
 
 
 @dataclass
@@ -130,11 +131,13 @@ class Jobs:
         return "\n".join(text.splitlines()[-lines:])
 
     # -- control -----------------------------------------------------------
-    def _spawn(self, kind: str, argv: list[str], meta: dict, log: str | None = None) -> Job:
+    def _spawn(self, kind: str, argv: list[str], meta: dict, log: str | None = None,
+               resume_argv: list[str] | None = None) -> Job:
         now = time.time()
         jid = dt.datetime.fromtimestamp(now).strftime("%Y%m%d-%H%M%S-%f")
         log = log or str(self.dir / f"{jid}-{kind}.log")
-        job = Job(id=jid, kind=kind, argv=list(argv), log=log, pid=0, started_at=now, meta=meta)
+        job = Job(id=jid, kind=kind, argv=list(argv), log=log, pid=0, started_at=now, meta=meta,
+                  resume_argv=resume_argv)
         _write_json(self.state_path, job.__dict__)
         with open(log, "a", encoding="utf-8") as lf:
             lf.write(f"\n=== {dt.datetime.fromtimestamp(now):%Y-%m-%d %H:%M:%S} ▶ {kind}\n")
@@ -145,10 +148,11 @@ class Jobs:
         _write_json(self.state_path, job.__dict__)
         return job
 
-    def start(self, kind: str, argv: list[str], meta: dict | None = None) -> Job:
+    def start(self, kind: str, argv: list[str], meta: dict | None = None,
+              resume_argv: list[str] | None = None) -> Job:
         if self.status().busy:
             raise RuntimeError("Уже идёт другая операция — дождись её или останови.")
-        return self._spawn(kind, argv, meta or {})
+        return self._spawn(kind, argv, meta or {}, resume_argv=resume_argv)
 
     def resume(self) -> Job:
         st = self.status()
@@ -156,7 +160,8 @@ class Jobs:
             raise RuntimeError("Операция уже идёт.")
         if st.job is None:
             raise RuntimeError("Нечего продолжать.")
-        return self._spawn(st.job.kind, st.job.argv, st.job.meta, log=st.job.log)
+        argv = st.job.resume_argv or st.job.argv
+        return self._spawn(st.job.kind, argv, st.job.meta, log=st.job.log, resume_argv=argv)
 
     def resume_if_wanted(self) -> Job | None:
         if self.status().state != "interrupted":

@@ -1,7 +1,7 @@
 # TGBlaster
 
 **Paced, resumable, duplicate-safe Telegram broadcasts from a spreadsheet.**
-One container, a CLI, SQLite state. Built for communities and meetups messaging people who gave
+One container, a web UI (plus a CLI for scripting), SQLite state. Built for communities and meetups messaging people who gave
 their contacts and expect to hear from you.
 
 > 🇷🇺 [Русская версия и подробный runbook](./README.ru.md) · ⚠️ read [DISCLAIMER.md](./DISCLAIMER.md) first
@@ -27,17 +27,17 @@ their contacts and expect to hear from you.
 
 ```bash
 cp .env.example .env                     # TG_API_ID / TG_API_HASH from my.telegram.org
-docker compose build
-alias tgb='docker compose run --rm blaster'
-tgb login
-tgb inspect data/inbox/contacts.xlsx
-tgb import  data/inbox/contacts.xlsx --list dec --yes
-tgb resolve --list dec
-tgb campaign create invite --list dec --template campaigns/invite.md
-tgb preview invite && tgb test invite
-docker compose run -d --name tgb-send blaster send invite --until-done --yes
-docker logs -f tgb-send
+docker compose up -d                     # → http://127.0.0.1:8501
 ```
+
+Pages: Telegram login (phone → code → 2FA) · Contacts (upload or link, detected columns editable,
+import on click) · Telegram lookup with live progress · Message editor with preview on real contacts and
+a test to Saved Messages · Sending (start/pause/stop, log, CSV report, opt-outs) · Settings (pacing, written
+to `.env`). Sending unlocks only after a test of the exact current message. Long operations run as
+background processes: closing the tab does not stop them, and a send interrupted by a container restart
+resumes on start.
+
+CLI: `docker compose run --rm blaster --help`.
 
 The full guide is in [README.ru.md](./README.ru.md).
 
@@ -45,6 +45,7 @@ The full guide is in [README.ru.md](./README.ru.md).
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m blaster.web      # UI on http://127.0.0.1:8501
 .venv/bin/python -m pytest
 ```
 

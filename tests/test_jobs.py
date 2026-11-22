@@ -92,3 +92,13 @@ def test_no_job_yet(jobs):
     assert jobs.status().state == "idle"
     assert jobs.log_tail() == ""
     assert jobs.resume_if_wanted() is None
+
+
+def test_resume_uses_resume_argv_so_one_shot_flags_are_not_repeated(jobs):
+    jobs.start("send", [PY, "-c", LOOPER.replace("started", "first-run")],
+               resume_argv=[PY, "-c", "print('resumed-run')"])
+    assert wait_for(lambda: "first-run" in jobs.log_tail())
+    jobs.pause()
+    assert wait_for(lambda: jobs.status().state == "paused")
+    jobs.resume()
+    assert wait_for(lambda: "resumed-run" in jobs.log_tail())

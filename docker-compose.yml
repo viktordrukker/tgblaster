@@ -1,15 +1,39 @@
-# One service, no ports, no database server: state lives in ./data
-# (SQLite) and ./sessions (Telethon session) on the host.
+# One command:  docker compose up -d   →  http://127.0.0.1:8501
 #
-#   docker compose build
-#   docker compose run --rm blaster inspect data/inbox/contacts.xlsx
-#   docker compose run --rm blaster login                    # interactive, once
-#   docker compose run -d --name tgb-send blaster send NAME --until-done --yes
-#   docker logs -f tgb-send        # watch
-#   docker stop -t 90 tgb-send     # graceful stop; re-run the same command to resume
+# State lives on the host: ./data (SQLite, reports, job logs), ./sessions
+# (Telegram session), ./campaigns (texts, banners), ./.env (settings —
+# the Settings page writes it). Long operations run as background
+# processes inside the container: closing the tab doesn't stop them, and
+# after a restart an interrupted send continues by itself.
 services:
-  blaster:
+  ui:
     build: .
+    image: tgblaster:2
+    # On `docker stop` blaster.web lets a running send finish its current
+    # message (journal stays consistent) and resumes it on the next start.
+    entrypoint: ["/usr/bin/tini", "--", "python", "-m", "blaster.web"]
+    command: []
+    environment:
+      BLASTER_HOME: /app
+      UI_ADDRESS: 0.0.0.0
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ./.env:/app/.env
+      - ./sessions:/app/sessions
+      - ./data:/app/data
+      - ./campaigns:/app/campaigns
+    restart: unless-stopped
+    stop_grace_period: 90s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Command line, for scripting/debugging:  docker compose run --rm blaster --help
+  blaster:
+    profiles: [cli]
     image: tgblaster:2
     env_file: .env
     environment:

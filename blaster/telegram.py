@@ -42,7 +42,8 @@ async def connected(settings: Settings, db: Database):
         try:
             yield client
         finally:
-            await client.disconnect()
+            if client.is_connected():          # log_out() already disconnected
+                await client.disconnect()
     finally:
         db.release_lock()
 
@@ -111,11 +112,15 @@ def load_account(settings: Settings) -> dict | None:
         return None
 
 
+class NotAuthorized(SystemExit):
+    pass
+
+
 async def ensure_authorized(client: TelegramClient) -> types.User:
     if not client.is_connected():
         await client.connect()
     if not await client.is_user_authorized():
-        raise SystemExit("Сессия не авторизована. Выполни: blaster login")
+        raise NotAuthorized("Сессия не авторизована. Выполни: blaster login")
     return await client.get_me()
 
 

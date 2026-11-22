@@ -59,6 +59,17 @@ jobs:
       - name: Smoke-run the CLI inside the image
         run: docker run --rm tgblaster:ci --help
 
+      - name: Smoke-run the web UI inside the image
+        run: |
+          docker run -d --name ui -p 127.0.0.1:8501:8501 -e UI_ADDRESS=0.0.0.0 \
+              --entrypoint python tgblaster:ci -m blaster.web
+          for i in $(seq 1 30); do
+            curl -fs http://127.0.0.1:8501/_stcore/health && exit 0
+            sleep 2
+          done
+          docker logs ui
+          exit 1
+
   secret-scan:
     name: check for leaked secrets
     runs-on: ubuntu-latest
