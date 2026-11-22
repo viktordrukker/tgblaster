@@ -267,3 +267,15 @@ def is_negative_answer(value: object) -> bool:
     first = s.split()[0]
     return first in {"нет", "no", "not", "yoq", "yo'q", "йўқ", "йук", "отказ",
                      "отказываюсь", "false", "0", "unsubscribe", "stop", "стоп"}
+
+
+def optout_key(value: str, region: str) -> str | None:
+    """Opt-out key for a phone, @username or id:123 — None if not understood."""
+    v = value.strip()
+    if v.startswith("id:"):
+        return v if v[3:].isdigit() else None
+    p = normalize_phone(v, region)
+    if p:
+        return p
+    u = extract_username(v, bare_ok=True)
+    return f"@{u}" if u else None
