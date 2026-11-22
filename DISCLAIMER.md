@@ -55,15 +55,18 @@ Your obligations include:
 - Disclosing Telegram as a sub-processor in your privacy policy.
 
 TGBlaster stores contact phone numbers and resolved Telegram IDs in a
-local SQLite database (`data/state.db`). No data ever leaves your
+local SQLite database (`data/blaster.db`). No data ever leaves your
 server except (a) the Telegram API calls you make and (b) whatever
 logs your hosting provider captures.
 
 ## What TGBlaster does to protect you
 
-- Pacing: 30–90 s between sends, a long pause every 40 messages,
-  configurable daily cap.
-- Stops the campaign automatically on `PeerFloodError`.
+- Pacing: 40–100 s between sends, a long pause every 30 messages,
+  a rolling-24h cap (150 by default) and a send window — all on the
+  Settings page.
+- Stops the campaign automatically after repeated `PeerFloodError`.
+- Real sending unlocks only after a test of the exact message to your
+  own Saved Messages and an explicit confirmation.
 - Logs every send with its Telegram `message_id` for audit.
 - Reserve-then-confirm idempotency — retrying a flaky send won't
   double-deliver.
